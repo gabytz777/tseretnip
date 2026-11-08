@@ -1,0 +1,16 @@
+# --- private capture & derived data (never publish) ---
+*.har
+extract/seed.json.orig
+
+# --- runtime state ---
+server/pinterest.db
+server/pinterest.db-shm
+server/pinterest.db-wal
+server/public/uploads/*
+!server/public/uploads/.gitkeep
+
+# --- deps & tooling ---
+node_modules/
+__pycache__/
+.zcode/
+*.log

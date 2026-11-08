@@ -1,0 +1,11 @@
+{
+  "name": "pinterest-instance-root",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Convenience wrapper so `npm start` works from the repository root",
+  "scripts": {
+    "start": "npm --prefix server start",
+    "verify": "npm --prefix server run verify",
+    "install:server": "npm --prefix server install"
+  }
+}

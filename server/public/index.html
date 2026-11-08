@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#e60023">
+  <title>Tseretnip</title>
+  <link rel="icon" href="assets/logo.jpg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="booting">
+  <div id="boot-screen" class="boot-screen" aria-hidden="true">
+    <img class="boot-logo" src="assets/logo.jpg" alt="">
+    <div class="spinner"></div>
+  </div>
+
+  <div id="auth-screen" class="auth-screen hidden">
+    <div class="auth-shell">
+      <section class="auth-brand">
+        <img class="auth-logo" src="assets/logo.jpg" alt="">
+        <h1>See it. Save it. Do it.</h1>
+        <p>Find ideas for every part of your life, then save them to boards you love.</p>
+        <div class="auth-collage" aria-hidden="true">
+          <img src="img/236x_04_53_77_045377458aee426e4d7573a07d60eb0f.jpg" alt="">
+          <img src="img/236x_2b_dd_f5_2bddf55dbf532ceec0200f2fe0d079f7.jpg" alt="">
+          <img src="img/236x_34_43_b9_3443b9ba2c882e08ce63a108d5d95dfd.jpg" alt="">
+        </div>
+      </section>
+
+      <section class="auth-card">
+        <div class="auth-tabs" role="tablist" aria-label="Account access">
+          <button class="auth-tab active" type="button" role="tab"
+                  aria-selected="true" data-auth-tab="login">Log in</button>
+          <button class="auth-tab" type="button" role="tab"
+                  aria-selected="false" data-auth-tab="signup">Sign up</button>
+        </div>
+
+        <form id="login-form" class="auth-form" novalidate>
+          <div class="auth-heading">
+            <h2>Welcome back</h2>
+            <p>Log in to see your Pins and boards.</p>
+          </div>
+          <label class="auth-field">
+            <span>Username or email</span>
+            <input id="login-identifier" name="identifier" type="text"
+                   autocomplete="username" placeholder="Username or email" required>
+          </label>
+          <label class="auth-field">
+            <span>Password</span>
+            <input id="login-password" name="password" type="password"
+                   autocomplete="current-password" placeholder="Password" required>
+          </label>
+          <div class="auth-error hidden" id="login-error" role="alert"></div>
+          <button class="auth-submit" type="submit">Log in</button>
+          <p class="auth-switch">New to Tseretnip?
+            <button type="button" data-auth-tab="signup">Create an account</button>
+          </p>
+        </form>
+
+        <form id="signup-form" class="auth-form hidden" novalidate>
+          <div class="auth-heading">
+            <h2>Create your account</h2>
+            <p>Save ideas and build boards of your own.</p>
+          </div>
+          <label class="auth-field">
+            <span>Full name</span>
+            <input id="signup-name" name="full_name" type="text"
+                   autocomplete="name" placeholder="Your name" required>
+          </label>
+          <label class="auth-field">
+            <span>Username</span>
+            <input id="signup-username" name="username" type="text"
+                   autocomplete="username" placeholder="Choose a username"
+                   pattern="[A-Za-z0-9_.]{3,30}" required>
+          </label>
+          <label class="auth-field">
+            <span>Email</span>
+            <input id="signup-email" name="email" type="email"
+                   autocomplete="email" placeholder="you@example.com" required>
+          </label>
+          <label class="auth-field">
+            <span>Password</span>
+            <input id="signup-password" name="password" type="password"
+                   autocomplete="new-password" placeholder="At least 8 characters"
+                   minlength="8" required>
+          </label>
+          <div class="auth-error hidden" id="signup-error" role="alert"></div>
+          <button class="auth-submit" type="submit">Create account</button>
+          <p class="auth-switch">Already have an account?
+            <button type="button" data-auth-tab="login">Log in</button>
+          </p>
+        </form>
+
+        <p class="auth-legal">
+          By continuing, you agree to this instance's terms and privacy policy.
+          No Tseretnip account is used or connected.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <header class="header">
+    <a class="logo-btn" href="/" id="nav-logo" aria-label="Tseretnip home">
+      <img class="logo-img" src="assets/logo.jpg" alt="">
+    </a>
+
+    <nav class="nav-left" aria-label="Primary">
+      <button class="nav-pill active" id="nav-home">Home</button>
+      <button class="nav-pill" id="nav-explore">Explore</button>
+      <div class="create-wrap">
+        <button class="nav-pill create-pill" id="nav-create" aria-haspopup="true" aria-expanded="false">
+          Create
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="menu create-menu hidden" id="create-menu">
+          <button class="menu-item" data-create="pin">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            Pin
+          </button>
+          <button class="menu-item" data-create="board">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M15 3v18"/></svg>
+            Board
+          </button>
+          <button class="menu-item" data-create="idea">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+            Idea Pin
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="search-wrap" id="search-wrap">
+      <form class="search-form" id="search-form" role="search">
+        <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="search" type="search" placeholder="Search" autocomplete="off" aria-label="Search">
+      </form>
+      <div id="typeahead" class="typeahead hidden" role="listbox"></div>
+    </div>
+
+    <div class="header-actions">
+      <button class="icon-btn create-mobile" id="nav-create-mobile" aria-label="Create Pin">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="icon-btn header-icon hidden" id="nav-admin" aria-label="Admin">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/><path d="m9 12 2 2 4-4"/></svg>
+      </button>
+      <button class="icon-btn header-icon" id="nav-notifications" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      </button>
+      <button class="icon-btn header-icon" id="nav-messages" aria-label="Messages">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </button>
+      <button class="avatar-btn" id="nav-profile" aria-label="Your profile">
+        <img id="me-avatar" alt="">
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <div id="notice-bar" class="notice-bar hidden"></div>
+    <div id="page-head" class="page-head hidden"></div>
+    <section id="profile-view" class="profile-view hidden"></section>
+    <section id="admin-view" class="admin-view hidden"></section>
+    <div id="feed" class="feed"></div>
+    <div id="empty" class="empty hidden"></div>
+    <div id="loading" class="loading hidden"><div class="spinner"></div></div>
+  </main>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Pin details">
+    <div class="modal-backdrop" id="modal-backdrop"></div>
+    <div class="modal-card">
+      <button class="modal-close" id="modal-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+
+      <div class="modal-media">
+        <img id="modal-img" alt="">
+      </div>
+
+      <div class="modal-side">
+        <div class="modal-top-actions">
+          <button class="icon-btn" id="modal-share" aria-label="Share">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
+          </button>
+          <button class="icon-btn" id="modal-more" aria-label="More options">
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="filled"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+          </button>
+        </div>
+
+        <div class="modal-scroll">
+          <h1 id="modal-title" class="modal-title"></h1>
+          <p id="modal-desc" class="modal-desc"></p>
+
+          <div class="creator-row" id="modal-creator-row">
+            <img id="modal-avatar" class="creator-avatar" alt="">
+            <div class="creator-text">
+              <div id="modal-creator" class="creator-name"></div>
+              <div id="modal-followers" class="creator-sub"></div>
+            </div>
+            <button class="follow-btn" id="modal-follow">Follow</button>
+          </div>
+
+          <div class="board-row" id="modal-board-row">
+            <img id="modal-board-cover" class="board-cover" alt="">
+            <div class="board-text">
+              <div class="board-label">Saved to</div>
+              <div id="modal-board" class="board-name"></div>
+            </div>
+          </div>
+
+          <div class="comments">
+            <h2 class="comments-title">Comments</h2>
+            <div id="comment-list" class="comment-list"></div>
+            <div class="comment-empty" id="comment-empty">No comments yet. Add one!</div>
+            <form class="comment-form" id="comment-form">
+              <img id="comment-avatar" class="comment-avatar" alt="">
+              <input id="comment-input" placeholder="Add a comment" autocomplete="off" aria-label="Add a comment">
+              <button type="submit" class="comment-send">Post</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <div class="reaction-group">
+            <button class="react-btn" id="btn-react">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/></svg>
+              <span>React</span>
+            </button>
+            <span id="modal-stats" class="stats"></span>
+          </div>
+          <div class="save-wrap">
+            <button class="save-btn" id="btn-save">Save</button>
+            <div class="board-picker hidden" id="board-picker"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="create-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Create Pin">
+    <div class="modal-backdrop" data-create-close></div>
+    <div class="modal-card create-card">
+      <button class="modal-close" id="create-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+
+      <div class="create-media">
+        <label class="create-drop" id="create-drop">
+          <input id="create-file" type="file"
+                 accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+          <img id="create-preview" class="hidden" alt="Pin preview">
+          <div class="create-drop-inner" id="create-drop-inner">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 16V4M7 9l5-5 5 5"/>
+              <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>
+            </svg>
+            <strong>Click to upload</strong>
+            <span>or drag and drop</span>
+            <small>PNG, JPG, WebP or GIF · up to 8 MB</small>
+          </div>
+        </label>
+      </div>
+
+      <form class="create-form" id="create-form" novalidate>
+        <h1>Create Pin</h1>
+        <label class="create-field">
+          <span>Title</span>
+          <input id="create-title" maxlength="100" placeholder="Add a title">
+        </label>
+        <label class="create-field">
+          <span>Description</span>
+          <textarea id="create-description" maxlength="800" rows="4"
+                    placeholder="Tell everyone what your Pin is about"></textarea>
+        </label>
+        <label class="create-field">
+          <span>Board</span>
+          <select id="create-board"></select>
+        </label>
+        <div class="auth-error hidden" id="create-error" role="alert"></div>
+        <div class="create-actions">
+          <button type="button" class="create-cancel" id="create-cancel">Cancel</button>
+          <button type="submit" class="auth-submit create-publish"
+                  id="create-submit" disabled>Publish</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="admin-dialog" class="modal hidden" role="dialog" aria-modal="true" aria-label="Moderation action">
+    <div class="modal-backdrop" data-admin-close></div>
+    <div class="modal-card admin-dialog-card" id="admin-dialog-card"></div>
+  </div>
+
+  <div id="profile-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Edit profile">
+    <div class="modal-backdrop" data-profile-close></div>
+    <div class="modal-card admin-dialog-card">
+      <button class="modal-close" type="button" data-profile-close aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+      <h2 class="admin-dialog-title">Edit profile</h2>
+      <p class="admin-dialog-desc">Update your photo, name, username and about.</p>
+      <form id="profile-form" class="profile-form" novalidate>
+        <div class="profile-photo-row">
+          <img id="profile-edit-avatar" class="profile-photo" alt="Profile photo">
+          <div class="profile-photo-actions">
+            <label class="profile-photo-btn">
+              Change photo
+              <input id="profile-edit-file" type="file"
+                     accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+            </label>
+            <small>PNG, JPG, WebP or GIF up to 8 MB</small>
+          </div>
+        </div>
+        <label class="create-field">
+          <span>Full name</span>
+          <input id="profile-edit-name" type="text" maxlength="200" required>
+        </label>
+        <label class="create-field">
+          <span>Username</span>
+          <input id="profile-edit-username" type="text" maxlength="30"
+                 pattern="[A-Za-z0-9_.]{3,30}" required>
+        </label>
+        <label class="create-field">
+          <span>About</span>
+          <textarea id="profile-edit-about" maxlength="1000" rows="4"
+                    placeholder="Tell people a little about yourself"></textarea>
+        </label>
+        <div class="admin-dialog-error hidden" id="profile-error"></div>
+        <div class="admin-dialog-actions">
+          <button type="button" class="create-cancel" data-profile-close>Cancel</button>
+          <button type="submit" class="admin-confirm" id="profile-save">Save changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
