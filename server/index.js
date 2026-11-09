@@ -1,5 +1,6 @@
 // Tseretnip - Express server serving the /resource/ API + static frontend.
 import express from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, seed } from './db.js';
@@ -18,17 +19,74 @@ app.use((req, _res, next) => {
   req.user = getSessionUser(req);
   next();
 });
-app.use(express.static(path.join(__dirname, 'public')));
-
 // App pages. The shell is shared, but each view has its own URL so it works
 // on reload, direct navigation, and the browser's back/forward buttons.
 const APP_PAGES = [
   '/explore', '/profile', '/search',
   '/admin', '/admin/accounts', '/admin/pins', '/admin/posts', '/admin/log',
 ];
-app.get(APP_PAGES, (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+
+// --- link embeds (Discord & friends read og:/twitter: meta, not JS) ---
+const SHELL = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+const pinForEmbed = db.prepare(
+  'SELECT id, title, description, img_url FROM pins WHERE id = ?');
+
+function escapeAttr(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function embedMeta(req, pin) {
+  const host = req.headers.host || `localhost:${PORT}`;
+  const proto = req.headers['x-forwarded-proto'] || 'http';
+  const base = `${proto}://${host}`;
+  const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+
+  let title = 'Tseretnip';
+  let description = 'A self-hosted, Pinterest-compatible pin-board instance.';
+  let image = '/assets/logo.jpg';
+  let card = 'summary';
+  if (pin) {
+    title = clean(pin.title || pin.description).slice(0, 120) || 'Pin on Tseretnip';
+    description = clean(pin.description || pin.title).slice(0, 200)
+      || 'Discovered on Tseretnip';
+    if (pin.img_url) image = pin.img_url;
+    card = 'summary_large_image';
+  }
+
+  const tags = [
+    ['og:site_name', 'Tseretnip'],
+    ['og:type', 'website'],
+    ['og:title', title],
+    ['og:description', description],
+    ['og:url', base + req.originalUrl],
+    ['og:image', base + image],
+    ['twitter:card', card],
+    ['twitter:title', title],
+    ['twitter:description', description],
+    ['twitter:image', base + image],
+  ];
+  return tags.map(([property, content]) =>
+    `<meta property="${property}" content="${escapeAttr(content)}">`).join('\n  ');
+}
+
+// Serves the app shell with per-URL embed meta.  A `?pin=<id>` link (the
+// shareable closeup) gets that pin's title/description/image in the card.
+function serveShell(req, res) {
+  const pinId = req.query.pin;
+  const pin = pinId ? pinForEmbed.get(String(pinId)) : null;
+  const html = SHELL.replace('<!-- embed -->', embedMeta(req, pin));
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+}
+
+// The shell routes must win over express.static, which would otherwise
+// answer `/` with the raw file (no embed meta).
+app.get('/', serveShell);
+app.get(APP_PAGES, serveShell);
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 // The universal resource route: GET/POST /resource/<Name>/<verb>/
 app.all(['/resource/:name/:verb', '/resource/:name/:verb/'], (req, res) => {

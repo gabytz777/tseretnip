@@ -207,6 +207,12 @@ of rounded pin cards; and a two-pane pin closeup.
   shell is shown. Logging out from the profile returns to that screen.
 - Comments are stored in `localStorage`; they are a frontend-only convenience
   and are not part of the captured API.
+- **Link embeds**: shared URLs render a card in Discord/Slack/etc. The server
+  injects `og:`/`twitter:` meta into the app shell per URL (crawlers don't run
+  JS). A `?pin=<id>` link — the shareable closeup — embeds that pin's title,
+  description, and image as a large card; other pages get a site card with the
+  logo. Image URLs are built from the request's `Host` (and
+  `X-Forwarded-Proto` behind a proxy), so it works under any hostname.
 - Views have real URLs (`/explore`, `/search?q=…`, `/profile`). The admin panel
   is split into pages: `/admin` (overview), `/admin/accounts`, `/admin/pins`
   (also accepted as `/admin/posts`), and `/admin/log`. They reload, link, and
