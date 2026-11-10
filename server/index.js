@@ -1,5 +1,6 @@
 // Tseretnip - Express server serving the /resource/ API + static frontend.
 import express from 'express';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +28,23 @@ const APP_PAGES = [
 ];
 
 // --- link embeds (Discord & friends read og:/twitter: meta, not JS) ---
-const SHELL = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+const PUBLIC_DIR = path.join(__dirname, 'public');
+
+// Content-hash the frontend assets and append it as a query string.  Proxies
+// (Cloudflare in particular) can force a long browser cache on .js/.css, so a
+// plain reload after a deploy may keep running the old bundle.  A new hash
+// changes the URL and busts that cache automatically.
+const ASSET_VERSION = (() => {
+  const hash = crypto.createHash('sha1');
+  for (const file of ['app.js', 'style.css']) {
+    hash.update(fs.readFileSync(path.join(PUBLIC_DIR, file)));
+  }
+  return hash.digest('hex').slice(0, 10);
+})();
+
+const SHELL = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8')
+  .replace('href="style.css"', `href="style.css?v=${ASSET_VERSION}"`)
+  .replace('src="app.js"', `src="app.js?v=${ASSET_VERSION}"`);
 const pinForEmbed = db.prepare(
   'SELECT id, title, description, img_url FROM pins WHERE id = ?');
 
@@ -78,6 +95,8 @@ function serveShell(req, res) {
   const pin = pinId ? pinForEmbed.get(String(pinId)) : null;
   const html = SHELL.replace('<!-- embed -->', embedMeta(req, pin));
   res.set('Content-Type', 'text/html; charset=utf-8');
+  // Always revalidate the shell so a deploy is picked up on the next load.
+  res.set('Cache-Control', 'no-cache');
   res.send(html);
 }
 
