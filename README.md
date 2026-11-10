@@ -37,7 +37,7 @@ HTML, CSS, and JavaScript with no build step.
 .
 ├── package.json                # root convenience scripts
 ├── extract/
-│   ├── extract.py              # builds demo data from a HAR capture
+│   ├── extract.py              # demo data generator
 │   ├── images/                 # bundled demo images
 │   ├── images_index.json       # source URL -> local filename
 │   └── seed.json               # bundled demo pins, boards, users, blobs
@@ -204,49 +204,17 @@ details are close approximations rather than pixel-exact reproductions.
 
 The repository ships anonymized demo content (fake usernames and names, no
 e-mail addresses or credentials) and generated placeholder images, so it runs
-without any external data.
+without any external data. The `extract/` directory contains the data
+generator together with the generated `seed.json`, `images_index.json`, and
+images.
 
-To regenerate the demo data from a browser network capture (HAR), place the
-capture at the repository root and run:
-
-```bash
-python3 extract/extract.py
-# or point it at a specific file:
-python3 extract/extract.py /path/to/capture.har
-```
-
-The extractor writes `extract/images/`, `extract/images_index.json`, and
-`extract/seed.json`. It drops cookies, auth/session tokens, passwords,
-recaptcha/fingerprint payloads, tracking parameters, and e-mail addresses.
-Captures and their outputs can contain third-party content, so review them
-before publishing.
-
-## Verification
+## Health check
 
 With the server running you can check the API directly:
 
 ```bash
 curl -s 'http://localhost:3000/health'
 curl -s 'http://localhost:3000/resource/UserHomefeedResource/get/?data=%7B%22options%22%3A%7B%22field_set_key%22%3A%22hf_grid%22%7D%7D'
-```
-
-`server/verify.js` is a development check that starts its own server on port
-4100 with a throw-away database, creates a throw-away account, compares live
-response shapes against a reference HAR, exercises save/react, and restarts
-the server to prove SQLite persistence. It requires a reference HAR at the
-repository root:
-
-```bash
-cd server
-node verify.js
-```
-
-Expected tail:
-
-```
-[ok] saved state survived restart
-[ok] reaction state survived restart (14 -> 15)
-[verify] PASS
 ```
 
 ## License
