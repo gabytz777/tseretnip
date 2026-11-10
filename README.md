@@ -102,9 +102,11 @@ The extractor writes:
   typeahead suggestions, experiences, and other static response blobs
 
 The repository ships **generated placeholder images** and an **anonymized
-seed** (fake usernames, names, and no external links) so no scraped content or
-personal data is published. Running the extractor against your own capture
-regenerates both from your data — keep the capture and its outputs private.
+seed** (fake usernames and names, and no e-mail addresses or credentials) so no
+scraped personal data is published. Some nested raw response blobs still carry
+public `i.pinimg.com` image URLs from the capture; they are metadata, not
+personal data. Running the extractor against your own capture regenerates both
+from your data — keep the capture and its outputs private.
 
 Only Pins described by a JSON resource response are seeded; images that merely
 appeared in the page markup are not turned into filler Pins.
@@ -132,7 +134,9 @@ mock `/v3/users/me/` and batch responses generate a fake
 | `NewsHubBadgeResource` | captured counts |
 | `UserExperiencePlatformResource` / `UserExperienceResource` | captured experience maps |
 | `ApiResource` | `/v3/users/me/`, metadata, search, ghost queries, gen-AI interests, recent stories, batch, saves, reactions |
-| `UserSessionResource` | `get` current session, `create` sign up / log in, `update` log out |
+| `UserSessionResource` | `get` current session, `create` sign up / log in, `update` log out or edit profile (name, username, about, flags, photo) |
+| `AggregatedCommentResource` | list comments on a Pin; `create` posts one |
+| `UserNetworkResource` | followers / following list for a profile |
 | `ApiSResource` / `ApiCResource` / `UserRegisterTrackActionResource` | logging acknowledgements |
 | `ActivateExperimentResource` | experiment groups |
 
@@ -147,7 +151,9 @@ Sign-up and login use the captured `UserSessionResource` transport:
 - `GET /resource/UserSessionResource/get/` returns
   `{ authenticated, user }` for the current cookie.
 - `POST /resource/UserSessionResource/update/` with
-  `options.action = "logout"` clears the session.
+  `options.action = "logout"` clears the session, or with
+  `options.action = "update_profile"` updates name, username, about, flags, and
+  (optionally) a base64 profile photo.
 
 Passwords are hashed with Node's `scrypt` and a per-user salt; plaintext is
 never stored. Sessions live in the `sessions` table and are carried by an
@@ -205,15 +211,23 @@ of rounded pin cards; and a two-pane pin closeup.
   profile/board grid, and board cards open that board's feed.
 - Logged-out visitors get a responsive login/sign-up screen before the app
   shell is shown. Logging out from the profile returns to that screen.
-- Comments are stored in `localStorage`; they are a frontend-only convenience
-  and are not part of the captured API.
+- Comments are stored in SQLite through `AggregatedCommentResource` (not part
+  of the captured API shape), so every visitor sees the same thread. The
+  displayed count adds live comments to the seeded count, and comments are
+  removed when their Pin or author is deleted.
+- Profiles can show up to four pride flags beside the name. They are picked in
+  the Edit profile dialog and stored on the user row; the flags are drawn with
+  inline gradients, so no extra image assets are needed.
+- Follower and following counts open a connections dialog
+  (`UserNetworkResource`) with follow/unfollow controls.
 - **Link embeds**: shared URLs render a card in Discord/Slack/etc. The server
   injects `og:`/`twitter:` meta into the app shell per URL (crawlers don't run
   JS). A `?pin=<id>` link — the shareable closeup — embeds that pin's title,
   description, and image as a large card; other pages get a site card with the
   logo. Image URLs are built from the request's `Host` (and
   `X-Forwarded-Proto` behind a proxy), so it works under any hostname.
-- Views have real URLs (`/explore`, `/search?q=…`, `/profile`). The admin panel
+- Views have real URLs (`/explore`, `/search?q=…`, `/profile`, and
+  `/<username>` for public profiles). The admin panel
   is split into pages: `/admin` (overview), `/admin/accounts`, `/admin/pins`
   (also accepted as `/admin/posts`), and `/admin/log`. They reload, link, and
   respond to browser back/forward like normal pages.

@@ -14,8 +14,10 @@ const PORT = process.env.PORT || 3000;
 seed();
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+// Image uploads are capped at 8 MB after base64 decoding, which is ~11 MB on
+// the wire once URL-encoded inside the `data` field.
+app.use(express.json({ limit: '16mb' }));
+app.use(express.urlencoded({ extended: true, limit: '16mb' }));
 app.use((req, _res, next) => {
   req.user = getSessionUser(req);
   next();
