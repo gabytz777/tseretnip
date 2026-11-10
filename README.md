@@ -1,7 +1,7 @@
 # Tseretnip
 
-A self-hosted, Pinterest-style pin-board app. It has a masonry feed, boards,
-pin closeups, search, comments, profiles, and an admin panel.
+A self-hosted pin-board app. It has a masonry feed, boards, pin closeups,
+search, comments, profiles, and an admin panel.
 
 The backend is a small Express + SQLite server that exposes a
 `/resource/<ResourceName>/<get|create|update>/` API. The frontend is plain
@@ -196,9 +196,9 @@ restarts.
   get a site card. Image URLs are built from the request `Host` (and
   `X-Forwarded-Proto` behind a proxy), so they work under any hostname.
 
-Known approximations: the proprietary Pinterest Sans font and Gestalt icon set
-are replaced by system fonts and inline SVG icons. Spacing and some control
-details are close approximations rather than pixel-exact reproductions.
+Known approximations: the proprietary web font and icon set are replaced by
+system fonts and inline SVG icons. Spacing and some control details are close
+approximations rather than pixel-exact reproductions.
 
 ## Demo data
 
