@@ -44,6 +44,20 @@ function parseJson(value, fallback = null) {
   }
 }
 
+// Up to 4 pride-flag ids displayed next to a user's name.
+function parseFlags(value) {
+  let flags = [];
+  try {
+    flags = JSON.parse(value || '[]');
+  } catch {
+    flags = [];
+  }
+  if (!Array.isArray(flags)) return [];
+  return flags
+    .filter((flag) => typeof flag === 'string' && /^[a-z0-9_]{1,24}$/.test(flag))
+    .slice(0, 4);
+}
+
 function localImage(url) {
   if (typeof url !== 'string') return null;
   return url.startsWith('/img/') || url.startsWith('/uploads/') ? url : null;
@@ -81,6 +95,7 @@ export function userShape(user, { followedByMe = false } = {}) {
     is_admin: Boolean(user.is_admin),
     is_banned: Boolean(user.is_banned),
     is_restricted: Boolean(user.is_restricted),
+    flags: parseFlags(user.flags),
   };
 }
 
@@ -141,6 +156,8 @@ export function pinShape(pin, { db, fieldSet = 'hf_grid', userId = null } = {}) 
     'SELECT type FROM reactions WHERE pin_id = ? AND user_id = ?');
   const getFollow = db.prepare(
     'SELECT 1 FROM follows WHERE follower_id = ? AND following_id = ?');
+  const getLiveComments = db.prepare(
+    'SELECT COUNT(*) AS n FROM comments WHERE pin_id = ?');
   const followedByMe = (id) => Boolean(
     userId && id && getFollow.get(String(userId), String(id)));
 
@@ -202,7 +219,10 @@ export function pinShape(pin, { db, fieldSet = 'hf_grid', userId = null } = {}) 
     recommendation_reason: parseJson(
       pin.recommendation_reason_json, raw.recommendation_reason || undefined),
     repin_count: pin.repin_count ?? raw.repin_count ?? 0,
-    comment_count: pin.comment_count ?? raw.comment_count ?? 0,
+    // Seeded pins carry the captured count; live comments are added on top so
+    // the number always matches the comment list.
+    comment_count: (pin.comment_count ?? raw.comment_count ?? 0) +
+      getLiveComments.get(pin.id).n,
     board: board ? boardShape(board, { db }) : raw.board,
     saved_info: {
       saved: Boolean(saved),

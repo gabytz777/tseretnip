@@ -88,6 +88,14 @@ app.get(APP_PAGES, serveShell);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Profile URLs (`/<username>/`) fall through static and render the app shell.
+// The frontend router then loads that user's profile.
+const RESERVED_PATHS = new Set(['favicon.ico', 'robots.txt', 'health']);
+app.get('/:username', (req, res, next) => {
+  if (RESERVED_PATHS.has(req.params.username)) return next();
+  serveShell(req, res);
+});
+
 // The universal resource route: GET/POST /resource/<Name>/<verb>/
 app.all(['/resource/:name/:verb', '/resource/:name/:verb/'], (req, res) => {
   const { name, verb } = req.params;

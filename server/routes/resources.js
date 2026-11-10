@@ -167,6 +167,7 @@ function assertModeratable(me, target) {
 }
 
 function removePin(pin) {
+  db.prepare('DELETE FROM comments WHERE pin_id = ?').run(pin.id);
   db.prepare('DELETE FROM reactions WHERE pin_id = ?').run(pin.id);
   db.prepare('DELETE FROM saved WHERE pin_id = ?').run(pin.id);
   if (pin.source === 'created' && String(pin.img_url || '').startsWith('/uploads/')) {
@@ -196,6 +197,7 @@ function removeAccount(target) {
   db.exec('BEGIN');
   try {
     for (const pin of ownedPins) {
+      db.prepare('DELETE FROM comments WHERE pin_id = ?').run(pin.id);
       db.prepare('DELETE FROM reactions WHERE pin_id = ?').run(pin.id);
       db.prepare('DELETE FROM saved WHERE pin_id = ?').run(pin.id);
       if (pin.source === 'created' && String(pin.img_url || '').startsWith('/uploads/')) {
@@ -214,6 +216,8 @@ function removeAccount(target) {
       const marks = boardIds.map(() => '?').join(',');
       db.prepare(`DELETE FROM saved WHERE board_id IN (${marks})`).run(...boardIds);
     }
+    // Comments the account wrote on other people's Pins.
+    db.prepare('DELETE FROM comments WHERE user_id = ?').run(target.id);
     db.prepare('DELETE FROM reactions WHERE user_id = ?').run(target.id);
     db.prepare('DELETE FROM follows WHERE follower_id = ? OR following_id = ?')
       .run(target.id, target.id);
@@ -287,7 +291,11 @@ const handlers = {
           endpoint_name: 'v3_get_user_handler',
         };
       }
-      const shape = userShape(user);
+      const me = meOf(ctx);
+      const followedByMe = Boolean(me && db.prepare(
+        'SELECT 1 FROM follows WHERE follower_id = ? AND following_id = ?')
+        .get(me.id, user.id));
+      const shape = userShape(user, { followedByMe });
       if (fieldSet === 'grid_item') {
         return { data: shape, endpoint_name: 'v3_get_user_handler' };
       }
@@ -311,6 +319,115 @@ const handlers = {
           type: 'user',
         },
         endpoint_name: 'v3_get_user_handler',
+      };
+    },
+  },
+
+  // Comments on a closeup.  get lists them, create posts one.
+  AggregatedCommentResource: {
+    get({ options }) {
+      const pin = getPin.get(String(options.pin_id || options.id || ''));
+      if (!pin) {
+        return { data: [], endpoint_name: 'v3_get_aggregated_comment' };
+      }
+      const rows = db.prepare(`
+        SELECT c.id AS comment_id, c.text, c.created_at, u.*
+        FROM comments c LEFT JOIN users u ON u.id = c.user_id
+        WHERE c.pin_id = ?
+        ORDER BY c.created_at DESC, c.rowid DESC`).all(pin.id);
+      return {
+        data: rows.map((row) => ({
+          id: String(row.comment_id),
+          pin_id: String(pin.id),
+          text: row.text,
+          created_at: row.created_at,
+          type: 'aggregatedcomment',
+          user: row.id ? userShape(row, {}) : null,
+        })),
+        endpoint_name: 'v3_get_aggregated_comment',
+      };
+    },
+
+    create({ options = {} }, ctx) {
+      const me = meOf(ctx);
+      if (!me) {
+        return {
+          data: null, error: 'unauthorized', httpStatus: 401,
+          endpoint_name: 'v3_create_aggregated_comment',
+        };
+      }
+      if (me.is_restricted) {
+        return {
+          data: null,
+          error: 'Your account is restricted from commenting.',
+          httpStatus: 403,
+          endpoint_name: 'v3_create_aggregated_comment',
+        };
+      }
+      const pin = getPin.get(String(options.pin_id || options.id || ''));
+      if (!pin) {
+        return {
+          data: null, error: 'Pin not found.', httpStatus: 404,
+          endpoint_name: 'v3_create_aggregated_comment',
+        };
+      }
+      const text = String(options.text || '').trim().slice(0, 1000);
+      if (!text) {
+        return {
+          data: null, error: 'Write a comment first.', httpStatus: 400,
+          endpoint_name: 'v3_create_aggregated_comment',
+        };
+      }
+      const id = `c_${Date.now()}_${crypto.randomInt(1000, 10000)}`;
+      db.prepare(`INSERT INTO comments (id, pin_id, user_id, text, created_at)
+                  VALUES (?, ?, ?, ?, ?)`)
+        .run(id, pin.id, me.id, text, new Date().toISOString());
+      const fresh = getUser.get(me.id);
+      return {
+        data: {
+          id,
+          pin_id: String(pin.id),
+          text,
+          created_at: new Date().toISOString(),
+          type: 'aggregatedcomment',
+          user: userShape(fresh, {}),
+          comment_count: (Number(pin.comment_count) || 0) + db.prepare(
+            'SELECT COUNT(*) AS n FROM comments WHERE pin_id = ?').get(pin.id).n,
+        },
+        endpoint_name: 'v3_create_aggregated_comment',
+      };
+    },
+  },
+
+  // Followers / following lists for a profile.
+  UserNetworkResource: {
+    get({ options }, ctx) {
+      const user = findUser(options, ctx);
+      if (!user) {
+        return { data: [], endpoint_name: 'v3_user_network' };
+      }
+      const me = meOf(ctx);
+      const list = String(options.list || 'followers');
+      // Followers: rows where the user is followed (join the follower).
+      // Following: rows where the user follows someone (join the followee).
+      const joinCol = list === 'following' ? 'following_id' : 'follower_id';
+      const filterCol = list === 'following' ? 'follower_id' : 'following_id';
+      const rows = db.prepare(`
+        SELECT u.*, f.created_at AS followed_at
+        FROM follows f JOIN users u ON u.id = f.${joinCol}
+        WHERE f.${filterCol} = ?
+        ORDER BY f.created_at DESC, u.rowid DESC`).all(user.id);
+      return {
+        data: rows.map((row) => {
+          const followedByMe = Boolean(me && db.prepare(
+            'SELECT 1 FROM follows WHERE follower_id = ? AND following_id = ?')
+            .get(me.id, row.id));
+          return {
+            ...userShape(row, { followedByMe }),
+            is_you: Boolean(me && String(row.id) === String(me.id)),
+          };
+        }),
+        endpoint_name: 'v3_user_network',
       };
     },
   },
@@ -963,6 +1080,16 @@ const handlers = {
         const about = String(
           options.about ?? me.about ?? '').trim().slice(0, 1000);
 
+        // Pride flags: an explicit array (possibly empty) replaces the set;
+        // omitting the field keeps the current one.  At most 4 are stored.
+        let flagsJson = null;
+        if (Array.isArray(options.flags)) {
+          const cleaned = [...new Set(options.flags
+            .map((flag) => String(flag).trim().toLowerCase())
+            .filter((flag) => /^[a-z0-9_]{1,24}$/.test(flag)))].slice(0, 4);
+          flagsJson = JSON.stringify(cleaned);
+        }
+
         if (!fullName) {
           return {
             data: null, error: 'Enter your name.', simple: true, httpStatus: 400,
@@ -1024,14 +1151,15 @@ const handlers = {
 
         if (avatarUrl) {
           db.prepare(`UPDATE users SET full_name = ?, username = ?, about = ?,
+                      flags = COALESCE(?, flags),
                       image_medium = ?, image_small = ?, image_large = ?,
                       image_xlarge = ? WHERE id = ?`)
-            .run(fullName, username, about, avatarUrl, avatarUrl, avatarUrl,
-              avatarUrl, me.id);
+            .run(fullName, username, about, flagsJson, avatarUrl, avatarUrl,
+              avatarUrl, avatarUrl, me.id);
         } else {
-          db.prepare(
-            'UPDATE users SET full_name = ?, username = ?, about = ? WHERE id = ?')
-            .run(fullName, username, about, me.id);
+          db.prepare(`UPDATE users SET full_name = ?, username = ?, about = ?,
+                      flags = COALESCE(?, flags) WHERE id = ?`)
+            .run(fullName, username, about, flagsJson, me.id);
         }
 
         const updated = getUser.get(me.id);

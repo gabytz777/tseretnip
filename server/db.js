@@ -48,6 +48,7 @@ export function migrate() {
       is_restricted INTEGER DEFAULT 0,
       restrict_reason TEXT,
       restricted_at TEXT,
+      flags         TEXT,   -- JSON array of up to 4 pride flag ids
       raw_json      TEXT
     );
     CREATE TABLE IF NOT EXISTS boards (
@@ -117,6 +118,13 @@ export function migrate() {
       created_at   TEXT,
       PRIMARY KEY (follower_id, following_id)
     );
+    CREATE TABLE IF NOT EXISTS comments (
+      id         TEXT PRIMARY KEY,
+      pin_id     TEXT REFERENCES pins(id),
+      user_id    TEXT REFERENCES users(id),
+      text       TEXT NOT NULL,
+      created_at TEXT
+    );
     CREATE TABLE IF NOT EXISTS warnings (
       id              TEXT PRIMARY KEY,
       user_id         TEXT REFERENCES users(id),
@@ -163,6 +171,7 @@ export function migrate() {
   ensureColumn('users', 'is_restricted', 'INTEGER DEFAULT 0');
   ensureColumn('users', 'restrict_reason', 'TEXT');
   ensureColumn('users', 'restricted_at', 'TEXT');
+  ensureColumn('users', 'flags', 'TEXT');
   ensureColumn('boards', 'image_cover_url', 'TEXT');
   ensureColumn('boards', 'image_thumbnail_url', 'TEXT');
   ensureColumn('boards', 'cover_images_json', 'TEXT');
@@ -394,6 +403,8 @@ export function seed() {
     // Earlier builds synthesised minimal "image-only" filler pins from images
     // that no JSON response described. They are no longer part of the seed;
     // drop them from databases created before this change.
+    db.exec(`DELETE FROM comments WHERE pin_id IN (
+      SELECT id FROM pins WHERE source = 'image-only')`);
     db.exec(`DELETE FROM reactions WHERE pin_id IN (
       SELECT id FROM pins WHERE source = 'image-only')`);
     db.exec(`DELETE FROM saved WHERE pin_id IN (
@@ -402,6 +413,8 @@ export function seed() {
 
     // Keep Pins deleted by an admin deleted even though seed() re-upserts the
     // captured feed on every startup.
+    db.exec(`DELETE FROM comments WHERE pin_id IN (
+      SELECT pin_id FROM deleted_pins)`);
     db.exec(`DELETE FROM reactions WHERE pin_id IN (
       SELECT pin_id FROM deleted_pins)`);
     db.exec(`DELETE FROM saved WHERE pin_id IN (
@@ -410,6 +423,8 @@ export function seed() {
       SELECT pin_id FROM deleted_pins)`);
 
     // Likewise for accounts removed through the admin panel.
+    db.exec(`DELETE FROM comments WHERE user_id IN (
+      SELECT user_id FROM deleted_users)`);
     db.exec(`DELETE FROM reactions WHERE user_id IN (
       SELECT user_id FROM deleted_users)`);
     db.exec(`DELETE FROM saved WHERE user_id IN (

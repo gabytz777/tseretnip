@@ -326,12 +326,28 @@
           <textarea id="profile-edit-about" maxlength="1000" rows="4"
                     placeholder="Tell people a little about yourself"></textarea>
         </label>
+        <div class="create-field">
+          <span>Flags <small id="flag-count" class="flag-count"></small></span>
+          <div id="flag-picker" class="flag-picker" role="group" aria-label="Pride flags"></div>
+          <small class="flag-hint">Pick up to 4 flags to show next to your name.</small>
+        </div>
         <div class="admin-dialog-error hidden" id="profile-error"></div>
         <div class="admin-dialog-actions">
           <button type="button" class="create-cancel" data-profile-close>Cancel</button>
           <button type="submit" class="admin-confirm" id="profile-save">Save changes</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="network-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Connections">
+    <div class="modal-backdrop" data-network-close></div>
+    <div class="modal-card admin-dialog-card network-card">
+      <button class="modal-close" type="button" data-network-close aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+      <h2 class="admin-dialog-title" id="network-title">Followers</h2>
+      <div id="network-list" class="network-list"></div>
     </div>
   </div>
 

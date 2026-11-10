@@ -29,6 +29,44 @@ function adminTick(isAdmin) {
   return '<svg class="verified-badge" viewBox="0 0 24 24" role="img" aria-label="Admin"><title>Admin</title><circle cx="12" cy="12" r="10"/><path d="m7.5 12.5 3 3 6-6"/></svg>';
 }
 
+// Pride flags users can pin next to their name (up to 4).  Ids must satisfy
+// the server-side /^[a-z0-9_]{1,24}$/ validation; unknown ids are ignored.
+const FLAGS = {
+  rainbow: { label: 'Pride', colors: ['#e40303', '#ff8c00', '#ffed00', '#008026', '#004dff', '#750787'] },
+  gay: { label: 'Gay men', colors: ['#078d70', '#26ceaa', '#98e98c', '#3b1f77', '#5088c5'] },
+  lesbian: { label: 'Lesbian', colors: ['#d62900', '#ff9b55', '#ffffff', '#d461a6', '#a50062'] },
+  bi: { label: 'Bisexual', colors: ['#d60270', '#9b4f96', '#0038a8'] },
+  pan: { label: 'Pansexual', colors: ['#ff1b6d', '#ffda34', '#1bb3ff'] },
+  trans: { label: 'Transgender', colors: ['#5bcefa', '#f5a9b8', '#ffffff', '#f5a9b8', '#5bcefa'] },
+  nonbinary: { label: 'Non-binary', colors: ['#fcf434', '#ffffff', '#9d59d2', '#2c2c2c'] },
+  genderqueer: { label: 'Genderqueer', colors: ['#b57edc', '#ffffff', '#4a8123'] },
+  genderfluid: { label: 'Genderfluid', colors: ['#ff75a2', '#c184d9', '#ffeb33', '#333333', '#333eb2'] },
+  agender: { label: 'Agender', colors: ['#000000', '#bcc4cf', '#ffffff', '#b8f483', '#ffffff', '#bcc4cf', '#000000'] },
+  aro: { label: 'Aromantic', colors: ['#3da542', '#a8d47f', '#ffffff', '#a9a9a9', '#000000'] },
+  ace: { label: 'Asexual', colors: ['#000000', '#a3a3a3', '#ffffff', '#810081'] },
+  intersex: { label: 'Intersex' },
+};
+
+function flagGradient(id) {
+  const flag = FLAGS[id];
+  if (!flag) return '';
+  if (id === 'intersex') {
+    return 'background:radial-gradient(circle at 50% 50%, #610097 0 32%, transparent 32%), #fffd00';
+  }
+  const stops = flag.colors
+    .map((color, i) => `${color} ${(i / flag.colors.length * 100).toFixed(1)}% ${((i + 1) / flag.colors.length * 100).toFixed(1)}%`)
+    .join(', ');
+  return `background:linear-gradient(180deg, ${stops})`;
+}
+
+function flagHtml(flags) {
+  const list = (Array.isArray(flags) ? flags : []).filter((id) => FLAGS[id]).slice(0, 4);
+  if (!list.length) return '';
+  return `<span class="flag-row">${list.map((id) =>
+    `<span class="flag" title="${esc(FLAGS[id].label)}" style="${flagGradient(id)}"></span>`
+  ).join('')}</span>`;
+}
+
 const EXPLORE_CHIPS = [
   'All', 'Home decor', 'Food', 'Travel', 'Art', 'Fashion', 'Beauty', 'DIY',
 ];
@@ -79,6 +117,9 @@ const state = {
   boardCovers: null,
   currentPin: null,
   comments: new Map(),
+  profileUsername: null,
+  flagSelection: new Set(),
+  networkUser: null,
   taItems: [],
   taIndex: -1,
 };
@@ -486,7 +527,8 @@ async function openPin(id) {
   $('#modal-desc').classList.toggle('hidden', !description);
 
   $('#modal-avatar').src = creator.image_medium_url || PLACEHOLDER_AVATAR;
-  $('#modal-creator').innerHTML = `${esc(creator.full_name || creator.username || 'Unknown')}${adminTick(creator.is_admin)}`;
+  $('#modal-creator').innerHTML =
+    `${esc(creator.full_name || creator.username || 'Unknown')}${adminTick(creator.is_admin)}${flagHtml(creator.flags)}`;
   const followers = Number(creator.follower_count);
   $('#modal-followers').textContent = Number.isFinite(followers) && followers >= 0
     ? `${formatCount(followers)} followers` : '';
@@ -519,7 +561,10 @@ async function openPin(id) {
   }
 
   $('#comment-avatar').src = state.me?.image_medium_url || PLACEHOLDER_AVATAR;
+  $('#comment-form').querySelector('.comment-send').disabled = false;
+  state.comments.set(pin.id, []);
   renderComments(pin.id);
+  loadComments(pin.id);
   updateModalStats(pin);
   updateModalButtons(pin);
   $('#board-picker').classList.add('hidden');
@@ -576,8 +621,9 @@ function updateModalStats(pin) {
   const reactions = Object.values(pin.reaction_counts || {})
     .reduce((sum, count) => sum + (Number(count) || 0), 0);
   const saves = Number(pin.repin_count) || 0;
+  const comments = Number(pin.comment_count) || 0;
   $('#modal-stats').textContent =
-    `${formatCount(reactions)} reactions · ${formatCount(saves)} saves`;
+    `${formatCount(reactions)} reactions · ${formatCount(saves)} saves · ${formatCount(comments)} comments`;
 }
 
 function updateModalButtons(pin) {
@@ -674,39 +720,70 @@ async function toggleBoardPicker() {
 }
 
 // ----------------------------------------------------------------- comments
-function commentKey(pinId) {
-  return `pinComments:${pinId}`;
+// Comments live on the server (AggregatedCommentResource) so everyone sees
+// them; state.comments only caches the current pin's list.
+function commentsOf(pinId) {
+  return state.comments.get(pinId) || [];
 }
 
-function getComments(pinId) {
-  if (state.comments.has(pinId)) return state.comments.get(pinId);
-  let comments = [];
+async function loadComments(pinId) {
   try {
-    comments = JSON.parse(localStorage.getItem(commentKey(pinId)) || '[]');
-  } catch { /* ignore */ }
-  if (!Array.isArray(comments)) comments = [];
-  state.comments.set(pinId, comments);
-  return comments;
-}
-
-function saveComments(pinId, comments) {
-  try {
-    localStorage.setItem(commentKey(pinId), JSON.stringify(comments));
-  } catch { /* ignore */ }
+    const rr = await resourceGet('AggregatedCommentResource', { pin_id: pinId });
+    if (!state.comments.has(pinId)) return; // closeup already closed
+    state.comments.set(pinId, Array.isArray(rr.data) ? rr.data : []);
+  } catch {
+    /* keep whatever list is already rendered */
+  }
+  renderComments(pinId);
 }
 
 function renderComments(pinId) {
-  const comments = getComments(pinId);
+  const comments = commentsOf(pinId);
   const list = $('#comment-list');
   list.innerHTML = comments.map((comment) => `
     <div class="comment">
-      <img src="${escAttr(comment.avatar || PLACEHOLDER_AVATAR)}" alt="">
+      <img src="${escAttr(comment.user?.image_medium_url || PLACEHOLDER_AVATAR)}" alt="">
       <div class="comment-body">
-        <div class="comment-name">${esc(comment.name || 'You')}${adminTick(comment.admin)}</div>
+        <div class="comment-name">${esc(comment.user?.full_name || comment.user?.username || 'User')}${adminTick(comment.user?.is_admin)}${flagHtml(comment.user?.flags)}</div>
         <div class="comment-text">${esc(comment.text || '')}</div>
       </div>
     </div>`).join('');
   $('#comment-empty').classList.toggle('hidden', comments.length > 0);
+}
+
+async function submitComment(pin) {
+  const input = $('#comment-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const button = $('#comment-form').querySelector('.comment-send');
+  button.disabled = true;
+  try {
+    const rr = await resourceSend('AggregatedCommentResource', 'create', {
+      pin_id: pin.id,
+      text,
+    });
+    if (rr.error || rr.data?.error) {
+      toast(rr.error || rr.data?.error);
+      return;
+    }
+    const comment = rr.data;
+    const comments = commentsOf(pin.id);
+    comments.unshift(comment);
+    state.comments.set(pin.id, comments);
+    input.value = '';
+    renderComments(pin.id);
+    if (Number.isFinite(Number(comment.comment_count))) {
+      pin.comment_count = Number(comment.comment_count);
+    } else {
+      pin.comment_count = (Number(pin.comment_count) || 0) + 1;
+    }
+    updateModalStats(pin);
+  } catch {
+    toast('Could not post your comment');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // ---------------------------------------------------------------- typeahead
@@ -761,6 +838,12 @@ function updateTaActive() {
 }
 
 function runSearchItem(item) {
+  if (item.type === 'user') {
+    const username = (item.query || '').trim();
+    hideTypeahead();
+    if (username) goUserProfile(username);
+    return;
+  }
   const term = (item.query || item.label || '').trim();
   if (!term) return;
   $('#search').value = term;
@@ -796,12 +879,14 @@ function showAuth(tab = 'login') {
   closeModal();
   closeCreate();
   closeProfileEdit();
+  closeNetwork();
   state.me = null;
   state.warnings = [];
   state.restriction = null;
   state.boards = null;
   state.boardCovers = null;
   state.currentPin = null;
+  state.comments.clear();
   $('#admin-view').classList.add('hidden');
   renderNotices();
   $('#me-avatar').src = PLACEHOLDER_AVATAR;
@@ -824,6 +909,7 @@ function enterApp(session) {
   $('#comment-avatar').src = avatar;
   state.boards = null;
   state.boardCovers = null;
+  state.comments.clear();
   updateAdminVisibility();
   renderNotices();
   applyRoute();
@@ -1572,6 +1658,13 @@ function applyRoute() {
     goAdmin(tab);
     return;
   }
+  // Anything else that is a single segment is a public profile URL
+  // (e.g. /somebody/), served by the same app shell.
+  const segment = path.slice(1);
+  if (segment && !segment.includes('/')) {
+    goUserProfile(decodeURIComponent(segment));
+    return;
+  }
   goHome();
 }
 
@@ -1662,38 +1755,63 @@ function goSearch(term) {
 
 async function goProfile() {
   pushPath('/profile');
-  setPageTitle('Your profile');
+  loadProfile(null);
+}
+
+// Public profile page for any account (also reached from search typeahead and
+// the closeup creator row).
+function goUserProfile(username) {
+  pushPath(`/${encodeURIComponent(username)}`);
+  loadProfile(username);
+}
+
+async function loadProfile(username = null) {
   profileToken += 1;
   const token = profileToken;
+  state.profileUsername = username;
   state.view = 'profile';
   state.board = null;
+  state.searchTerm = '';
   setActiveNav(null);
   showProfile();
+  setPageTitle(username ? `@${username}` : 'Your profile');
 
+  const isOwn = !username;
   const el = $('#profile-view');
   el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
   try {
     const [userRR, boardsRR] = await Promise.all([
-      resourceGet('UserResource', { username: 'me', field_set_key: 'profile' }),
+      resourceGet('UserResource', {
+        username: username || 'me',
+        field_set_key: 'profile',
+      }),
       resourceGet('BoardsResource', {
         page_size: 100,
         privacy_filter: 'all',
         sort: 'last_pinned_to',
-        username: 'me',
+        username: username || 'me',
       }),
     ]);
     if (token !== profileToken) return;
 
-    const user = userRR.data || state.me || {};
+    if (!userRR.data) {
+      el.innerHTML = `<div class="empty"><h2>Profile not found</h2>
+        <p>No account named “${esc(username || '')}” exists on this instance.</p></div>`;
+      return;
+    }
+
+    const user = userRR.data;
     const boards = boardsRR.data || [];
-    state.me = user;
-    state.boards = boards;
-    $('#me-avatar').src = user.image_medium_url || PLACEHOLDER_AVATAR;
+    if (isOwn) {
+      state.me = user;
+      state.boards = boards;
+      $('#me-avatar').src = user.image_medium_url || PLACEHOLDER_AVATAR;
+    }
 
     const covers = await loadBoardCovers(boards);
     if (token !== profileToken) return;
-    renderProfile(user, boards, covers);
+    renderProfile(user, boards, covers, isOwn);
   } catch {
     if (token === profileToken) {
       el.innerHTML = '<div class="empty"><h2>Could not load profile</h2><p>Please try again.</p></div>';
@@ -1701,42 +1819,75 @@ async function goProfile() {
   }
 }
 
-function renderProfile(user, boards, covers) {
+function renderProfile(user, boards, covers, isOwn) {
   const el = $('#profile-view');
   const name = user.full_name || user.username || 'You';
   const handle = user.username ? `@${user.username}` : '';
+  const following = Boolean(user.explicitly_followed_by_me);
 
   el.innerHTML = `
     <div class="profile-head">
       <img class="profile-avatar" src="${escAttr(user.image_medium_url || PLACEHOLDER_AVATAR)}" alt="">
-      <h1 class="profile-name">${esc(name)}${adminTick(user.is_admin)}</h1>
+      <h1 class="profile-name">${esc(name)}${adminTick(user.is_admin)}${flagHtml(user.flags)}</h1>
       ${handle ? `<div class="profile-handle">${esc(handle)}</div>` : ''}
       ${user.about ? `<p class="profile-bio">${esc(user.about)}</p>` : ''}
       <div class="profile-stats">
-        <span><b>${formatCount(user.follower_count)}</b> followers</span>
-        <span><b>${formatCount(user.following_count)}</b> following</span>
+        <button type="button" class="stat-btn" data-network="followers">
+          <b>${formatCount(user.follower_count)}</b> followers</button>
+        <button type="button" class="stat-btn" data-network="following">
+          <b>${formatCount(user.following_count)}</b> following</button>
         <span><b>${formatCount(user.pin_count)}</b> Pins</span>
       </div>
       <div class="profile-actions">
         <button type="button" id="profile-share">Share</button>
-        <button type="button" id="profile-edit">Edit profile</button>
-        ${state.me?.is_admin ? '<button type="button" id="profile-admin" class="profile-admin">Admin</button>' : ''}
-        <button type="button" id="profile-logout">Log out</button>
+        ${isOwn ? `
+          <button type="button" id="profile-edit">Edit profile</button>
+          ${state.me?.is_admin ? '<button type="button" id="profile-admin" class="profile-admin">Admin</button>' : ''}
+          <button type="button" id="profile-logout">Log out</button>` : `
+          <button type="button" class="follow-btn profile-follow ${following ? 'following' : ''}"
+                  id="profile-follow" data-user-id="${escAttr(user.id)}">
+            ${following ? 'Following' : 'Follow'}</button>`}
       </div>
     </div>
     <div class="profile-tabs">
-      <button class="profile-tab active" type="button">Saved</button>
-      <button class="profile-tab" type="button">Created</button>
+      <button class="profile-tab active" type="button">Boards</button>
     </div>
     <div class="board-grid">
-      ${boards.map((board) => boardCardHtml(board, covers[board.id] || [])).join('')}
+      ${boards.length
+        ? boards.map((board) => boardCardHtml(board, covers[board.id] || [])).join('')
+        : '<p class="admin-empty">No boards yet.</p>'}
     </div>
   `;
 
-  $('#profile-share').addEventListener('click', () => toast('Profile link copied'));
-  $('#profile-edit').addEventListener('click', openProfileEdit);
-  $('#profile-admin')?.addEventListener('click', () => goAdmin('overview'));
-  $('#profile-logout').addEventListener('click', logout);
+  $('#profile-share').addEventListener('click', async () => {
+    const url = isOwn
+      ? `${location.origin}/profile`
+      : `${location.origin}/${encodeURIComponent(user.username)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch { /* clipboard may be unavailable */ }
+    toast('Profile link copied');
+  });
+  if (isOwn) {
+    $('#profile-edit').addEventListener('click', openProfileEdit);
+    $('#profile-admin')?.addEventListener('click', () => goAdmin('overview'));
+    $('#profile-logout').addEventListener('click', logout);
+  } else {
+    $('#profile-follow').addEventListener('click', async (event) => {
+      const data = await followToggle(event.currentTarget);
+      if (data && Number.isFinite(Number(data.follower_count))) {
+        const btn = el.querySelector('[data-network="followers"]');
+        if (btn) btn.innerHTML =
+          `<b>${formatCount(data.follower_count)}</b> followers`;
+      }
+    });
+  }
+
+  $$('.stat-btn', el).forEach((button) => {
+    button.addEventListener('click', () => {
+      openNetwork(user, button.dataset.network);
+    });
+  });
 
   $$('.board-card', el).forEach((card) => {
     card.addEventListener('click', () => {
@@ -1744,6 +1895,86 @@ function renderProfile(user, boards, covers) {
       if (board) openBoard(board);
     });
   });
+}
+
+// Shared follow/unfollow for the profile page and the followers/following
+// modal.  Returns the response so callers can update counters.
+async function followToggle(button) {
+  const userId = button.dataset.userId;
+  if (!userId || button.disabled) return null;
+
+  const wasFollowing = button.classList.contains('following');
+  button.disabled = true;
+  try {
+    const rr = await resourceSend('ApiResource', wasFollowing ? 'update' : 'create', {
+      url: `/v3/users/${userId}/${wasFollowing ? 'unfollow' : 'follow'}/`,
+      data: {},
+    });
+    if (rr.error || rr.data?.error) {
+      toast(rr.error || rr.data?.error);
+      return null;
+    }
+    const following = Boolean(rr.data?.following);
+    button.classList.toggle('following', following);
+    button.textContent = following ? 'Following' : 'Follow';
+    toast(following ? 'Following' : 'Unfollowed');
+    return rr.data;
+  } catch {
+    toast('Could not update follow');
+    return null;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// ---------------------------------------------------- followers / following
+async function openNetwork(user, list) {
+  state.networkUser = user;
+  $('#network-title').textContent = list === 'following'
+    ? `Following · @${user.username}`
+    : `Followers · @${user.username}`;
+  const listEl = $('#network-list');
+  listEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  $('#network-modal').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const rr = await resourceGet('UserNetworkResource', {
+      username: user.username,
+      list,
+    });
+    if (state.networkUser?.id !== user.id) return;
+    const people = Array.isArray(rr.data) ? rr.data : [];
+    listEl.innerHTML = people.length
+      ? people.map(networkRowHtml).join('')
+      : `<p class="admin-empty">No ${list === 'following' ? 'follows' : 'followers'} yet.</p>`;
+  } catch {
+    listEl.innerHTML = '<p class="admin-empty">Could not load the list.</p>';
+  }
+}
+
+function networkRowHtml(person) {
+  const isYou = Boolean(person.is_you) ||
+    String(person.id) === String(state.me?.id);
+  const followBtn = isYou ? '' : `
+    <button type="button" class="follow-btn small ${person.explicitly_followed_by_me ? 'following' : ''}"
+            data-network-follow="${escAttr(person.id)}">
+      ${person.explicitly_followed_by_me ? 'Following' : 'Follow'}
+    </button>`;
+  return `<div class="network-row" data-network-user="${escAttr(person.username || '')}" ${isYou ? '' : 'role="link"'}>
+    <img src="${escAttr(person.image_medium_url || PLACEHOLDER_AVATAR)}" alt="">
+    <div class="network-info">
+      <div class="network-name">${esc(person.full_name || person.username || 'User')}${adminTick(person.is_admin)}${flagHtml(person.flags)}${isYou ? '<span class="network-you"> (you)</span>' : ''}</div>
+      <div class="network-handle">@${esc(person.username || '')}</div>
+    </div>
+    ${followBtn}
+  </div>`;
+}
+
+function closeNetwork() {
+  $('#network-modal').classList.add('hidden');
+  document.body.style.overflow = '';
+  state.networkUser = null;
 }
 
 // ------------------------------------------------------------- edit profile
@@ -1762,12 +1993,26 @@ function openProfileEdit() {
   $('#profile-edit-about').value = me.about || '';
   $('#profile-edit-file').value = '';
   $('#profile-error').classList.add('hidden');
+  state.flagSelection = new Set((me.flags || []).filter((id) => FLAGS[id]).slice(0, 4));
+  renderFlagPicker();
   const save = $('#profile-save');
   save.disabled = false;
   save.textContent = 'Save changes';
   $('#profile-modal').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   $('#profile-edit-name').focus();
+}
+
+function renderFlagPicker() {
+  const picker = $('#flag-picker');
+  picker.innerHTML = Object.entries(FLAGS).map(([id, flag]) => `
+    <button type="button" class="flag-option ${state.flagSelection.has(id) ? 'selected' : ''}"
+            data-flag-id="${escAttr(id)}" title="${esc(flag.label)}"
+            aria-pressed="${state.flagSelection.has(id)}">
+      <span class="flag" style="${flagGradient(id)}"></span>
+      <span class="flag-label">${esc(flag.label)}</span>
+    </button>`).join('');
+  $('#flag-count').textContent = `${state.flagSelection.size}/4`;
 }
 
 function closeProfileEdit() {
@@ -1816,7 +2061,13 @@ async function submitProfileEdit(event) {
   save.textContent = 'Saving…';
   $('#profile-error').classList.add('hidden');
 
-  const payload = { action: 'update_profile', full_name: fullName, username, about };
+  const payload = {
+    action: 'update_profile',
+    full_name: fullName,
+    username,
+    about,
+    flags: [...state.flagSelection].slice(0, 4),
+  };
   if (profileEditImage) payload.image = profileEditImage;
 
   try {
@@ -1876,7 +2127,10 @@ function openBoard(board) {
     sub: `${formatCount(board.pin_count || 0)} ${Number(board.pin_count) === 1 ? 'Pin' : 'Pins'}`,
     back: true,
   });
-  $('#page-back')?.addEventListener('click', goProfile);
+  $('#page-back')?.addEventListener('click', () => {
+    if (state.profileUsername) goUserProfile(state.profileUsername);
+    else goProfile();
+  });
   loadFeed(true);
 }
 
@@ -2098,26 +2352,51 @@ function wireEvents() {
 
   $('#comment-form').addEventListener('submit', (event) => {
     event.preventDefault();
-    const pin = state.currentPin;
-    if (!pin) return;
-    const input = $('#comment-input');
-    const text = input.value.trim();
-    if (!text) return;
+    if (state.currentPin) submitComment(state.currentPin);
+  });
 
-    const comments = getComments(pin.id);
-    comments.push({
-      name: state.me?.full_name || 'You',
-      avatar: state.me?.image_medium_url || '',
-      admin: Boolean(state.me?.is_admin),
-      text,
-      ts: Date.now(),
-    });
-    state.comments.set(pin.id, comments);
-    saveComments(pin.id, comments);
-    input.value = '';
-    renderComments(pin.id);
-    pin.comment_count = (Number(pin.comment_count) || 0) + 1;
-    updateModalStats(pin);
+  // Clicking the creator in a closeup opens their public profile.
+  $('#modal-creator-row').addEventListener('click', (event) => {
+    if (event.target.closest('#modal-follow')) return;
+    const creator = state.currentPin?.native_creator || state.currentPin?.pinner;
+    if (creator?.username) {
+      closeModal();
+      goUserProfile(creator.username);
+    }
+  });
+
+  $('#network-modal').addEventListener('click', (event) => {
+    if (event.target.closest('[data-network-close]')) {
+      closeNetwork();
+      return;
+    }
+    const followBtn = event.target.closest('[data-network-follow]');
+    if (followBtn) {
+      event.stopPropagation();
+      followToggle(followBtn);
+      return;
+    }
+    const row = event.target.closest('[data-network-user]');
+    if (row) {
+      closeNetwork();
+      goUserProfile(row.dataset.networkUser);
+    }
+  });
+
+  $('#flag-picker').addEventListener('click', (event) => {
+    const option = event.target.closest('[data-flag-id]');
+    if (!option) return;
+    const id = option.dataset.flagId;
+    if (state.flagSelection.has(id)) {
+      state.flagSelection.delete(id);
+    } else {
+      if (state.flagSelection.size >= 4) {
+        toast('You can pick up to 4 flags');
+        return;
+      }
+      state.flagSelection.add(id);
+    }
+    renderFlagPicker();
   });
 
   document.addEventListener('click', (event) => {
@@ -2134,6 +2413,7 @@ function wireEvents() {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       if (!$('#admin-dialog').classList.contains('hidden')) closeAdminDialog();
+      else if (!$('#network-modal').classList.contains('hidden')) closeNetwork();
       else if (!$('#profile-modal').classList.contains('hidden')) closeProfileEdit();
       else if (!$('#create-modal').classList.contains('hidden')) closeCreate();
       else if (!$('#modal').classList.contains('hidden')) closeModal();
