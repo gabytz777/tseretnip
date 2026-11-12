@@ -186,6 +186,7 @@
           <button class="icon-btn" id="modal-more" aria-label="More options">
             <svg viewBox="0 0 24 24" aria-hidden="true" class="filled"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
           </button>
+          <div class="menu modal-menu hidden" id="modal-menu"></div>
         </div>
 
         <div class="modal-scroll">
@@ -320,6 +321,7 @@
           <span>Username</span>
           <input id="profile-edit-username" type="text" maxlength="30"
                  pattern="[A-Za-z0-9_.]{3,30}" required>
+          <small class="create-hint" id="profile-username-hint"></small>
         </label>
         <label class="create-field">
           <span>About</span>
@@ -348,6 +350,21 @@
       </button>
       <h2 class="admin-dialog-title" id="network-title">Followers</h2>
       <div id="network-list" class="network-list"></div>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-backdrop" data-confirm-close></div>
+    <div class="modal-card admin-dialog-card">
+      <button class="modal-close" type="button" data-confirm-close aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+      <h2 class="admin-dialog-title" id="confirm-title">Are you sure?</h2>
+      <p class="admin-dialog-desc" id="confirm-desc"></p>
+      <div class="admin-dialog-actions">
+        <button type="button" class="create-cancel" data-confirm-close>Cancel</button>
+        <button type="button" class="admin-confirm danger" id="confirm-ok">Delete</button>
+      </div>
     </div>
   </div>
 

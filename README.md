@@ -20,7 +20,12 @@ HTML, CSS, and JavaScript with no build step.
   `/admin`, …), so reload, links, and browser back/forward work.
 - Link embeds: the server injects `og:`/`twitter:` meta so shared links render
   a card in Discord, Slack, and similar apps.
-- Admin panel for accounts, pins, warnings, and moderation history.
+- Deleting: remove your own pins and comments, behind a confirmation dialog;
+  admins can remove anyone's.
+- Usernames change at most once every 7 days, and the profile form says when
+  the field unlocks again.
+- Admin panel for accounts, pins, warnings, and moderation history, including
+  an account editor for name, username, about text, and flags.
 - Accounts with scrypt-hashed passwords and cookie-based sessions.
 
 ## Tech stack
@@ -112,7 +117,8 @@ Sign-up and login use the `UserSessionResource` endpoints:
 - `POST /resource/UserSessionResource/update/` with
   `options.action = "logout"` clears the session, or with
   `options.action = "update_profile"` updates name, username, about, flags,
-  and (optionally) a base64 profile photo.
+  and (optionally) a base64 profile photo. A username change is limited to one
+  every 7 days; see [Writes](#writes).
 
 Passwords are hashed with Node's `scrypt` and a per-user salt; plaintext is
 never stored. Sessions live in the `sessions` table and are carried by an
@@ -143,7 +149,7 @@ Every response uses the same envelope:
 | `UserResource` | `profile`, `grid_item`, `save_behavior` field sets |
 | `BoardsResource` | a user's boards, `page_size` + bookmark pagination |
 | `BoardFeedResource` | pins saved to or owned by a board, paginated |
-| `PinResource` | pin closeup shape; `create` publishes an uploaded pin |
+| `PinResource` | pin closeup shape; `create` publishes an uploaded pin, `update` deletes one |
 | `RelatedPinsResource` | same-board/creator pins first, then the feed |
 | `SearchTabResource` | search over seeded pins; story modules when empty |
 | `AdvancedTypeaheadResource` | recent queries plus live pin/user suggestions |
@@ -152,7 +158,7 @@ Every response uses the same envelope:
 | `UserExperiencePlatformResource` / `UserExperienceResource` | experience maps |
 | `ApiResource` | user metadata, search, ghost queries, interests, stories, batch, saves, reactions |
 | `UserSessionResource` | session get/create/update (sign up, log in, log out, edit profile) |
-| `AggregatedCommentResource` | list comments on a pin; `create` posts one |
+| `AggregatedCommentResource` | comments on a pin: `get` lists them, `create` posts one, `update` deletes one |
 | `UserNetworkResource` | followers / following list for a profile |
 | `ApiSResource` / `ApiCResource` / `UserRegisterTrackActionResource` | logging acknowledgements |
 | `ActivateExperimentResource` | experiment groups |
@@ -167,6 +173,25 @@ Every response uses the same envelope:
   `options.url = /v3/board/<board_id>/pin/<pin_id>/save/`.
 - React to a pin: `POST /resource/ApiResource/update/` with
   `options.url = /v3/pins/<pin_id>/reaction/`.
+- Delete a pin: `POST /resource/PinResource/update/` with
+  `options.action = "delete"` and `options.id` (or
+  `POST /resource/ApiResource/update/` with
+  `options.url = /v3/pins/<pin_id>/delete/`). The owner or an admin may
+  delete; anyone else is refused with `403`. Seeded pins are tombstoned in
+  `deleted_pins`, so the demo seed does not bring them back on the next start,
+  and the pin's uploads, comments, reactions, and saves go with it.
+- Delete a comment: `POST /resource/AggregatedCommentResource/update/` with
+  `options.id` (and optionally `options.pin_id`). The comment's author, the
+  pin's owner, and admins may delete.
+- Change a username: `POST /resource/UserSessionResource/update/` with
+  `options.action = "update_profile"`. A change is allowed once every 7 days;
+  the last one is stored in `users.username_changed_at` (added by the startup
+  migration) and the profile and session responses carry `username_changed_at`
+  and `username_change_available_at` so the form can show when the field
+  unlocks. Changing it again too soon answers `429`. Saving the rest of the
+  profile with the current username stays allowed. Usernames are stored
+  lowercase, so a case-only edit is not a change, and a staff edit through the
+  admin panel neither uses nor starts the window.
 
 Created pins belong to the session user, are saved to the chosen board, and
 are ranked ahead of the demo feed. Uploaded files and pin rows survive
@@ -185,10 +210,23 @@ restarts.
 - Infinite scroll follows the `bookmark` cursor.
 - The closeup shows the image, title/description, creator, board, comments,
   reaction and save controls, and a save-to-board popover.
+- The closeup's more button opens an action menu with *Copy link* plus *Delete
+  pin* for the pin's owner and for admins. Deleting asks for confirmation,
+  drops the card from the grid immediately, and (for staff deleting someone
+  else's pin) is written to the moderation log.
+- Comments are stored in SQLite, so every visitor sees the same thread. The
+  author of a comment, the owner of the pin, and admins get a trash button on
+  the comments they may remove, also behind a confirmation dialog.
+- The edit-profile form keeps the username field visible but read-only while
+  the 7-day window is closed, and says on which date it reopens. The server
+  enforces the same rule if the form is bypassed.
+- The admin panel's *Edit* action opens a form with full name, username, about,
+  and the flags, so staff can fix a profile (or clear its flags) without
+  asking the account holder. Staff edits skip the username window and still
+  have to pass the same handle rules and uniqueness check as the public form.
 - Explore reuses the feed with topic chips; the avatar opens a profile/board
   grid, and board cards open that board's feed.
 - Logged-out visitors get a login/sign-up screen before the app shell.
-- Comments are stored in SQLite, so every visitor sees the same thread.
 - Profile flags are drawn with inline gradients, so no extra image assets are
   needed.
 - Link embeds inject `og:`/`twitter:` meta per URL, since crawlers do not run

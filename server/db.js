@@ -49,6 +49,7 @@ export function migrate() {
       restrict_reason TEXT,
       restricted_at TEXT,
       flags         TEXT,   -- JSON array of up to 4 pride flag ids
+      username_changed_at TEXT,  -- last self-service username change (7-day cooldown)
       raw_json      TEXT
     );
     CREATE TABLE IF NOT EXISTS boards (
@@ -172,6 +173,7 @@ export function migrate() {
   ensureColumn('users', 'restrict_reason', 'TEXT');
   ensureColumn('users', 'restricted_at', 'TEXT');
   ensureColumn('users', 'flags', 'TEXT');
+  ensureColumn('users', 'username_changed_at', 'TEXT');
   ensureColumn('boards', 'image_cover_url', 'TEXT');
   ensureColumn('boards', 'image_thumbnail_url', 'TEXT');
   ensureColumn('boards', 'cover_images_json', 'TEXT');

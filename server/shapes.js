@@ -45,7 +45,7 @@ function parseJson(value, fallback = null) {
 }
 
 // Up to 4 pride-flag ids displayed next to a user's name.
-function parseFlags(value) {
+export function parseFlags(value) {
   let flags = [];
   try {
     flags = JSON.parse(value || '[]');

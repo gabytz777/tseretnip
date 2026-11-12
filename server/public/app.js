@@ -17,6 +17,7 @@ const ICONS = {
   share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>',
+  trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/>',
 };
 
 function icon(name, cls = '') {
@@ -111,6 +112,7 @@ const state = {
   restriction: null,
   adminTab: 'overview',
   adminPending: null,
+  adminFlags: new Set(),
   adminUsers: [],
   adminPins: [],
   boards: null,
@@ -269,7 +271,7 @@ function createPinCard(pin) {
   });
   card.querySelector('[data-action="more"]').addEventListener('click', (event) => {
     event.stopPropagation();
-    toast('More options are not part of this instance');
+    openPin(pin.id);
   });
   card.addEventListener('click', () => openPin(pin.id));
   card.addEventListener('keydown', (event) => {
@@ -568,6 +570,7 @@ async function openPin(id) {
   updateModalStats(pin);
   updateModalButtons(pin);
   $('#board-picker').classList.add('hidden');
+  $('#modal-menu').classList.add('hidden');
 
   $('#modal').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
@@ -613,6 +616,7 @@ function closeModal() {
   pinRequest += 1;
   $('#modal').classList.add('hidden');
   $('#board-picker').classList.add('hidden');
+  $('#modal-menu').classList.add('hidden');
   document.body.style.overflow = '';
   state.currentPin = null;
 }
@@ -686,6 +690,81 @@ async function toggleReaction() {
   }
 }
 
+// --------------------------------------------------------------- pin menu
+// The closeup's "more" menu.  Deleting is offered to the Pin's owner and to
+// admins; everyone else only gets the share action.
+function canDeletePin(pin) {
+  const me = state.me;
+  if (!me || !pin) return false;
+  if (me.is_admin) return true;
+  const owner = pin.pinner || pin.native_creator || {};
+  return Boolean(owner.id) && String(owner.id) === String(me.id);
+}
+
+function toggleModalMenu() {
+  const menu = $('#modal-menu');
+  if (!menu.classList.contains('hidden')) {
+    menu.classList.add('hidden');
+    return;
+  }
+  const pin = state.currentPin;
+  if (!pin) return;
+  const items = ['<button class="menu-item" type="button" data-modal-action="copy">Copy link</button>'];
+  if (canDeletePin(pin)) {
+    items.push('<button class="menu-item danger" type="button" data-modal-action="delete">Delete Pin</button>');
+  }
+  menu.innerHTML = items.join('');
+  menu.classList.remove('hidden');
+}
+
+function removePinFromView(pinId) {
+  const id = String(pinId);
+  const card = state.cardEls.get(pinId);
+  if (card) card.remove();
+  state.cardEls.delete(pinId);
+  state.pinById.delete(pinId);
+  state.pins = state.pins.filter((pin) => String(pin.id) !== id);
+  state.comments.delete(pinId);
+  // Board covers and counts are now stale; rebuild them on the next visit.
+  state.boards = null;
+  state.boardCovers = null;
+  // Pull the remaining cards back up so the grid has no hole where it was.
+  const cards = state.pins
+    .map((pin) => state.cardEls.get(pin.id))
+    .filter(Boolean);
+  if (cards.length && state.columns.length) {
+    createColumns(state.columns.length);
+    for (const el of cards) placeCard(el);
+  }
+}
+
+async function deleteCurrentPin() {
+  const pin = state.currentPin;
+  if (!pin) return;
+  const confirmed = await confirmAction({
+    title: 'Delete Pin',
+    desc: 'This Pin will be removed for everyone. This cannot be undone.',
+    confirmLabel: 'Delete',
+  });
+  if (!confirmed) return;
+
+  try {
+    const response = await resourceSend('PinResource', 'update', {
+      action: 'delete',
+      id: pin.id,
+    });
+    if (response.error || response.data?.error) {
+      toast(response.error || response.data?.error);
+      return;
+    }
+    removePinFromView(pin.id);
+    closeModal();
+    toast('Pin deleted');
+  } catch {
+    toast('Could not delete this Pin');
+  }
+}
+
 // ---------------------------------------------------------------- board menu
 async function toggleBoardPicker() {
   const picker = $('#board-picker');
@@ -744,11 +823,52 @@ function renderComments(pinId) {
     <div class="comment">
       <img src="${escAttr(comment.user?.image_medium_url || PLACEHOLDER_AVATAR)}" alt="">
       <div class="comment-body">
-        <div class="comment-name">${esc(comment.user?.full_name || comment.user?.username || 'User')}${adminTick(comment.user?.is_admin)}${flagHtml(comment.user?.flags)}</div>
+        <div class="comment-head">
+          <span class="comment-name">${esc(comment.user?.full_name || comment.user?.username || 'User')}${adminTick(comment.user?.is_admin)}${flagHtml(comment.user?.flags)}</span>
+          ${comment.can_delete ? `<button class="comment-delete" type="button"
+            data-comment-id="${escAttr(comment.id)}" aria-label="Delete comment"
+            title="Delete comment">${icon('trash')}</button>` : ''}
+        </div>
         <div class="comment-text">${esc(comment.text || '')}</div>
       </div>
     </div>`).join('');
   $('#comment-empty').classList.toggle('hidden', comments.length > 0);
+}
+
+async function deleteComment(commentId) {
+  const pin = state.currentPin;
+  if (!pin) return;
+  const confirmed = await confirmAction({
+    title: 'Delete comment',
+    desc: 'This comment will be removed for everyone. This cannot be undone.',
+    confirmLabel: 'Delete',
+  });
+  if (!confirmed) return;
+
+  try {
+    const rr = await resourceSend('AggregatedCommentResource', 'update', {
+      id: commentId,
+      pin_id: pin.id,
+    });
+    if (rr.error || rr.data?.error) {
+      toast(rr.error || rr.data?.error);
+      return;
+    }
+    state.comments.set(
+      pin.id,
+      commentsOf(pin.id).filter((comment) => String(comment.id) !== String(commentId)),
+    );
+    renderComments(pin.id);
+    if (Number.isFinite(Number(rr.data?.comment_count))) {
+      pin.comment_count = Number(rr.data.comment_count);
+    } else {
+      pin.comment_count = Math.max(0, (Number(pin.comment_count) || 0) - 1);
+    }
+    updateModalStats(pin);
+    toast('Comment deleted');
+  } catch {
+    toast('Could not delete this comment');
+  }
 }
 
 async function submitComment(pin) {
@@ -1107,7 +1227,7 @@ function adminUserHtml(user) {
   return `<article class="admin-user">
     <img src="${escAttr(user.image_medium_url || PLACEHOLDER_AVATAR)}" alt="">
     <div class="admin-user-info">
-      <div class="admin-user-name">${esc(user.full_name)}${adminTick(user.is_admin)} <span>@${esc(user.username)}</span></div>
+      <div class="admin-user-name">${esc(user.full_name)}${adminTick(user.is_admin)}${flagHtml(user.flags)} <span>@${esc(user.username)}</span></div>
       <div class="admin-user-meta">
         ${formatCount(user.pin_count)} Pins ${badges.join('')}
       </div>
@@ -1277,6 +1397,7 @@ function closeAdminDialog() {
   $('#admin-dialog').classList.add('hidden');
   $('#admin-dialog-card').innerHTML = '';
   state.adminPending = null;
+  state.adminFlags = new Set();
   document.body.style.overflow = '';
 }
 
@@ -1303,7 +1424,7 @@ function openAdminDialog(action, target) {
       `Permanently delete ${name}?`,
       'Delete Pin', [['Reason (optional)', 'reason']]],
     edit_user: ['Edit account',
-      `Edit ${name}'s profile information`,
+      `Edit ${name}'s profile information. Changes apply immediately and are logged.`,
       'Save changes',
       [['Full name', 'full_name'], ['Username', 'username'], ['About', 'about']]],
     reset_password: ['Reset password',
@@ -1315,6 +1436,13 @@ function openAdminDialog(action, target) {
   const [title, description, confirmLabel, fields] = config;
   const danger = ['ban', 'delete_user', 'delete_pin'].includes(action);
 
+  // Staff edits are not the account holder changing their own handle, so the
+  // 7-day username window neither applies nor starts here.
+  const editing = action === 'edit_user';
+  state.adminFlags = new Set(
+    editing ? (Array.isArray(target.flags) ? target.flags : []).filter((id) => FLAGS[id]).slice(0, 4) : [],
+  );
+
   $('#admin-dialog-card').innerHTML = `
     <button class="modal-close" data-admin-close aria-label="Close">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -1324,9 +1452,23 @@ function openAdminDialog(action, target) {
     ${fields.map(([fieldLabel, fieldName]) => `
       <label class="admin-field">
         <span>${esc(fieldLabel)}</span>
-        <textarea id="admin-${fieldName}" maxlength="500" rows="3">${esc(action === 'edit_user' ? (target[fieldName] || '') : '')}</textarea>
+        ${fieldName === 'about'
+          ? `<textarea id="admin-${fieldName}" maxlength="500" rows="3">${esc(editing ? (target[fieldName] || '') : '')}</textarea>`
+          : `<input id="admin-${fieldName}" type="text"
+                    maxlength="${fieldName === 'username' ? 30 : 200}"
+                    value="${escAttr(editing ? (target[fieldName] || '') : '')}">`}
+        ${editing && fieldName === 'username'
+          ? '<small class="flag-hint">Staff edits skip the 7-day limit and do not start one.</small>'
+          : ''}
       </label>
     `).join('')}
+    ${editing ? `
+      <div class="admin-field">
+        <span>Gender flags <small id="admin-flag-count" class="flag-count">${state.adminFlags.size}/4</small></span>
+        <div id="admin-flag-picker" class="flag-picker" role="group"
+             aria-label="Gender flags">${flagPickerHtml(state.adminFlags)}</div>
+        <small class="flag-hint">Pick up to 4 flags to show next to their name.</small>
+      </div>` : ''}
     <div class="admin-dialog-error hidden" id="admin-dialog-error"></div>
     <div class="admin-dialog-actions">
       <button type="button" class="create-cancel" data-admin-close>Cancel</button>
@@ -1339,6 +1481,22 @@ function openAdminDialog(action, target) {
   $('#admin-dialog').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   $('#admin-confirm').addEventListener('click', submitAdminDialog);
+  $('#admin-flag-picker')?.addEventListener('click', (event) => {
+    const option = event.target.closest('[data-flag-id]');
+    if (!option) return;
+    const id = option.dataset.flagId;
+    if (state.adminFlags.has(id)) {
+      state.adminFlags.delete(id);
+    } else {
+      if (state.adminFlags.size >= 4) {
+        toast('You can pick up to 4 flags');
+        return;
+      }
+      state.adminFlags.add(id);
+    }
+    $('#admin-flag-picker').innerHTML = flagPickerHtml(state.adminFlags);
+    $('#admin-flag-count').textContent = `${state.adminFlags.size}/4`;
+  });
   const firstTextarea = $('#admin-full_name');
   if (firstTextarea) firstTextarea.focus();
 }
@@ -1393,6 +1551,8 @@ async function submitAdminDialog() {
     options.full_name = fieldValues.full_name || pending.target.full_name;
     options.username = fieldValues.username || pending.target.username;
     options.about = fieldValues.about || pending.target.about;
+    // Always send the set, so clearing every flag is a real change.
+    options.flags = [...(state.adminFlags || [])].slice(0, 4);
   } else {
     // reason / message for ban, restrict, warn, delete
     Object.assign(options, fieldValues);
@@ -1993,6 +2153,7 @@ function openProfileEdit() {
   $('#profile-edit-about').value = me.about || '';
   $('#profile-edit-file').value = '';
   $('#profile-error').classList.add('hidden');
+  renderUsernameCooldown(me);
   state.flagSelection = new Set((me.flags || []).filter((id) => FLAGS[id]).slice(0, 4));
   renderFlagPicker();
   const save = $('#profile-save');
@@ -2003,15 +2164,39 @@ function openProfileEdit() {
   $('#profile-edit-name').focus();
 }
 
-function renderFlagPicker() {
-  const picker = $('#flag-picker');
-  picker.innerHTML = Object.entries(FLAGS).map(([id, flag]) => `
-    <button type="button" class="flag-option ${state.flagSelection.has(id) ? 'selected' : ''}"
+// Usernames may change once every 7 days.  While the window is closed the
+// field stays readable but not editable, and the hint says when it reopens;
+// the server enforces the same rule.
+function renderUsernameCooldown(me) {
+  const availableAt = me?.username_change_available_at || null;
+  const unlock = availableAt ? new Date(availableAt).getTime() : 0;
+  const locked = Number.isFinite(unlock) && unlock > Date.now();
+  const input = $('#profile-edit-username');
+  input.readOnly = locked;
+  input.title = locked
+    ? `You can change your username again on ${formatDay(availableAt)}.`
+    : '';
+  $('#profile-username-hint').textContent = locked
+    ? `You can change your username again on ${formatDay(availableAt)}.`
+    : 'You can change your username once every 7 days.';
+}
+
+// Shared by the account holder's edit form and the admin panel's account
+// editor, so both offer the same vocabulary and the same 4-flag cap.
+function flagPickerHtml(selection) {
+  return Object.entries(FLAGS).map(([id, flag]) => {
+    const on = selection.has(id);
+    return `<button type="button" class="flag-option ${on ? 'selected' : ''}"
             data-flag-id="${escAttr(id)}" title="${esc(flag.label)}"
-            aria-pressed="${state.flagSelection.has(id)}">
+            aria-pressed="${on}">
       <span class="flag" style="${flagGradient(id)}"></span>
       <span class="flag-label">${esc(flag.label)}</span>
-    </button>`).join('');
+    </button>`;
+  }).join('');
+}
+
+function renderFlagPicker() {
+  $('#flag-picker').innerHTML = flagPickerHtml(state.flagSelection);
   $('#flag-count').textContent = `${state.flagSelection.size}/4`;
 }
 
@@ -2053,6 +2238,17 @@ async function submitProfileEdit(event) {
   }
   if (!/^[A-Za-z0-9_.]{3,30}$/.test(username)) {
     showProfileError('Username must be 3-30 characters using letters, numbers, dots, or underscores.');
+    return;
+  }
+
+  // The server enforces the 7-day window too; catching it here avoids a round
+  // trip and gives the same date the hint shows.
+  const currentUsername = String(state.me?.username || '');
+  const usernameAvailableAt = state.me?.username_change_available_at || null;
+  if (username.toLowerCase() !== currentUsername.toLowerCase()
+      && usernameAvailableAt
+      && new Date(usernameAvailableAt).getTime() > Date.now()) {
+    showProfileError(`You can change your username again on ${formatDay(usernameAvailableAt)}.`);
     return;
   }
 
@@ -2134,6 +2330,31 @@ function openBoard(board) {
   loadFeed(true);
 }
 
+// ---------------------------------------------------------------- confirm
+// Small promise-based confirmation dialog, used by destructive actions that
+// belong to the account holder (deleting a Pin or a comment) rather than to
+// moderation.
+let confirmResolve = null;
+
+function confirmAction({ title, desc, confirmLabel = 'Delete' } = {}) {
+  return new Promise((resolve) => {
+    if (confirmResolve) confirmResolve(false);
+    confirmResolve = resolve;
+    $('#confirm-title').textContent = title || 'Are you sure?';
+    $('#confirm-desc').textContent = desc || '';
+    $('#confirm-ok').textContent = confirmLabel;
+    $('#confirm-modal').classList.remove('hidden');
+    $('#confirm-ok').focus();
+  });
+}
+
+function closeConfirm(result = false) {
+  $('#confirm-modal').classList.add('hidden');
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  if (resolve) resolve(result);
+}
+
 // -------------------------------------------------------------------- toast
 function toast(message) {
   const el = $('#toast');
@@ -2160,6 +2381,15 @@ function formatCount(value) {
     return `${(n / 1e3).toFixed(n % 1e3 === 0 ? 0 : 1).replace(/\.0$/, '')}k`;
   }
   return String(n);
+}
+
+function formatDay(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
 }
 
 function esc(value) {
@@ -2334,8 +2564,36 @@ function wireEvents() {
     if (state.currentPin) copyLink(state.currentPin);
     toast('Link copied to clipboard');
   });
-  $('#modal-more').addEventListener('click', () => {
-    toast('More options are not part of this instance');
+  $('#modal-more').addEventListener('click', (event) => {
+    event.stopPropagation();
+    toggleModalMenu();
+  });
+
+  $('#modal-menu').addEventListener('click', (event) => {
+    const item = event.target.closest('[data-modal-action]');
+    if (!item) return;
+    event.stopPropagation();
+    $('#modal-menu').classList.add('hidden');
+    if (item.dataset.modalAction === 'copy') {
+      if (state.currentPin) copyLink(state.currentPin);
+      toast('Link copied to clipboard');
+    } else if (item.dataset.modalAction === 'delete') {
+      deleteCurrentPin();
+    }
+  });
+
+  $('#comment-list').addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-comment-id]');
+    if (!btn) return;
+    deleteComment(btn.dataset.commentId);
+  });
+
+  $('#confirm-modal').addEventListener('click', (event) => {
+    if (event.target.closest('[data-confirm-close]')) {
+      closeConfirm(false);
+      return;
+    }
+    if (event.target.closest('#confirm-ok')) closeConfirm(true);
   });
   $('#modal-follow').addEventListener('click', (event) => {
     toggleFollow(event.currentTarget);
@@ -2408,11 +2666,15 @@ function wireEvents() {
     if (!event.target.closest('.save-wrap')) {
       $('#board-picker').classList.add('hidden');
     }
+    if (!event.target.closest('#modal-menu')) {
+      $('#modal-menu').classList.add('hidden');
+    }
   });
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-      if (!$('#admin-dialog').classList.contains('hidden')) closeAdminDialog();
+      if (!$('#confirm-modal').classList.contains('hidden')) closeConfirm(false);
+      else if (!$('#admin-dialog').classList.contains('hidden')) closeAdminDialog();
       else if (!$('#network-modal').classList.contains('hidden')) closeNetwork();
       else if (!$('#profile-modal').classList.contains('hidden')) closeProfileEdit();
       else if (!$('#create-modal').classList.contains('hidden')) closeCreate();

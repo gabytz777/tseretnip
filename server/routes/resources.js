@@ -11,13 +11,17 @@ import {
 } from '../auth.js';
 import {
   makeBookmark, parseBookmark, pinShape, previewPinShape, boardShape,
-  userShape, nodeId, b64, pinImages,
+  userShape, nodeId, b64, pinImages, parseFlags,
 } from '../shapes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEED_PATH = path.resolve(__dirname, '../../extract/seed.json');
 const UPLOAD_DIR = path.resolve(__dirname, '../public/uploads');
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+// Self-service username changes are limited to one every 7 days.  The column
+// `users.username_changed_at` holds the last change; staff edits through the
+// admin panel deliberately bypass it.
+const USERNAME_CHANGE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const STATIC_SEED = fs.existsSync(SEED_PATH)
   ? JSON.parse(fs.readFileSync(SEED_PATH, 'utf8'))
   : {};
@@ -121,13 +125,40 @@ function sessionPayload(user) {
      ORDER BY created_at DESC`).all(user.id);
   return {
     authenticated: true,
-    user: userShape(user),
+    user: withUsernameWindow(user),
     warnings,
     restriction: user.is_restricted ? {
       restricted: true,
       reason: user.restrict_reason || '',
       since: user.restricted_at || null,
     } : { restricted: false },
+  };
+}
+
+// ---- username change cooldown ---------------------------------------------
+// Returns the ISO timestamp after which the account may change its username
+// again, or null when a change is available right now.
+function usernameChangeAvailableAt(user) {
+  if (!user?.username_changed_at) return null;
+  const changedAt = new Date(user.username_changed_at).getTime();
+  if (!Number.isFinite(changedAt)) return null;
+  const availableAt = changedAt + USERNAME_CHANGE_COOLDOWN_MS;
+  return availableAt > Date.now() ? new Date(availableAt).toISOString() : null;
+}
+
+function usernameChangeError(availableAt) {
+  const day = String(availableAt).slice(0, 10);
+  return `You can change your username once every 7 days. ` +
+    `The next change is available on ${day}.`;
+}
+
+// userShape plus the cooldown window, so the settings form can show when the
+// username field unlocks instead of only failing on save.
+function withUsernameWindow(user) {
+  return {
+    ...userShape(user),
+    username_changed_at: user.username_changed_at || null,
+    username_change_available_at: usernameChangeAvailableAt(user),
   };
 }
 
@@ -185,6 +216,52 @@ function removePin(pin) {
     db.prepare(`UPDATE users SET pin_count = MAX(COALESCE(pin_count, 0) - 1, 0)
                 WHERE id = ?`).run(pin.pinner_id);
   }
+}
+
+// Pride flags are a small, fixed vocabulary: up to 4 lowercase ids.  An
+// explicit array (possibly empty) replaces the set; omitting the field leaves
+// it alone.  Returns null for "leave alone" so SQL can COALESCE it.
+function cleanFlags(input) {
+  if (!Array.isArray(input)) return null;
+  return JSON.stringify([...new Set(input
+    .map((flag) => String(flag).trim().toLowerCase())
+    .filter((flag) => /^[a-z0-9_]{1,24}$/.test(flag)))].slice(0, 4));
+}
+
+// A comment can be removed by its author, by the owner of the Pin it sits on,
+// or by an admin.
+function canDeleteComment(me, comment, pin) {
+  if (!me || !comment) return false;
+  if (me.is_admin) return true;
+  if (String(comment.user_id) === String(me.id)) return true;
+  return Boolean(pin && String(pin.pinner_id) === String(me.id));
+}
+
+// Shared by PinResource.update and the /v3/pins/<id>/delete/ route.  A Pin can
+// be deleted by its owner or by an admin; admin deletions are logged.
+function deletePinFor(pinId, me) {
+  if (!me) {
+    return { data: null, error: 'unauthorized', httpStatus: 401 };
+  }
+  const pin = getPin.get(String(pinId || ''));
+  if (!pin) {
+    return { data: null, error: 'Pin not found.', httpStatus: 404 };
+  }
+  const ownerId = String(pin.pinner_id || pin.creator_id || '');
+  const isOwner = Boolean(ownerId) && ownerId === String(me.id);
+  if (!isOwner && !me.is_admin) {
+    return {
+      data: null,
+      error: 'You can only delete your own Pins.',
+      httpStatus: 403,
+    };
+  }
+  const detail = pin.title || pin.description || pin.id;
+  removePin(pin);
+  if (!isOwner) {
+    logModeration(me, 'delete_pin', { targetPin: pin, detail });
+  }
+  return { data: { deleted: true, pin_id: String(pin.id) } };
 }
 
 function removeAccount(target) {
@@ -317,21 +394,25 @@ const handlers = {
           pin_count: user.pin_count ?? 0,
           profile_tabs: ['boards'],
           type: 'user',
+          username_changed_at: user.username_changed_at || null,
+          username_change_available_at: usernameChangeAvailableAt(user),
         },
         endpoint_name: 'v3_get_user_handler',
       };
     },
   },
 
-  // Comments on a closeup.  get lists them, create posts one.
+  // Comments on a closeup.  get lists them, create posts one, update deletes
+  // one (the author, the Pin's owner, or an admin may delete).
   AggregatedCommentResource: {
-    get({ options }) {
+    get({ options }, ctx) {
       const pin = getPin.get(String(options.pin_id || options.id || ''));
       if (!pin) {
         return { data: [], endpoint_name: 'v3_get_aggregated_comment' };
       }
+      const me = meOf(ctx);
       const rows = db.prepare(`
-        SELECT c.id AS comment_id, c.text, c.created_at, u.*
+        SELECT c.id AS comment_id, c.text, c.created_at, c.user_id, u.*
         FROM comments c LEFT JOIN users u ON u.id = c.user_id
         WHERE c.pin_id = ?
         ORDER BY c.created_at DESC, c.rowid DESC`).all(pin.id);
@@ -342,6 +423,7 @@ const handlers = {
           text: row.text,
           created_at: row.created_at,
           type: 'aggregatedcomment',
+          can_delete: canDeleteComment(me, row, pin),
           user: row.id ? userShape(row, {}) : null,
         })),
         endpoint_name: 'v3_get_aggregated_comment',
@@ -390,11 +472,54 @@ const handlers = {
           text,
           created_at: new Date().toISOString(),
           type: 'aggregatedcomment',
+          can_delete: true,
           user: userShape(fresh, {}),
           comment_count: (Number(pin.comment_count) || 0) + db.prepare(
             'SELECT COUNT(*) AS n FROM comments WHERE pin_id = ?').get(pin.id).n,
         },
         endpoint_name: 'v3_create_aggregated_comment',
+      };
+    },
+
+    // Delete one comment.  Authors delete their own; a Pin's owner can delete
+    // any comment on that Pin; admins can delete anything.
+    update({ options = {} }, ctx) {
+      const me = meOf(ctx);
+      if (!me) {
+        return {
+          data: null, error: 'unauthorized', httpStatus: 401,
+          endpoint_name: 'v3_delete_aggregated_comment',
+        };
+      }
+      const commentId = String(options.id || options.comment_id || '');
+      const comment = db.prepare('SELECT * FROM comments WHERE id = ?')
+        .get(commentId);
+      if (!comment) {
+        return {
+          data: null, error: 'Comment not found.', httpStatus: 404,
+          endpoint_name: 'v3_delete_aggregated_comment',
+        };
+      }
+      const pin = getPin.get(comment.pin_id);
+      if (!canDeleteComment(me, comment, pin)) {
+        return {
+          data: null,
+          error: 'You can only delete your own comments.',
+          httpStatus: 403,
+          endpoint_name: 'v3_delete_aggregated_comment',
+        };
+      }
+      db.prepare('DELETE FROM comments WHERE id = ?').run(comment.id);
+      const live = db.prepare(
+        'SELECT COUNT(*) AS n FROM comments WHERE pin_id = ?').get(comment.pin_id).n;
+      return {
+        data: {
+          deleted: true,
+          id: String(comment.id),
+          pin_id: String(comment.pin_id),
+          comment_count: (Number(pin?.comment_count) || 0) + live,
+        },
+        endpoint_name: 'v3_delete_aggregated_comment',
       };
     },
   },
@@ -521,6 +646,13 @@ const handlers = {
         }
         throw error;
       }
+    },
+
+    // Delete a Pin.  Owners delete their own; admins may delete any Pin.
+    update({ options = {} }, ctx) {
+      const result = deletePinFor(
+        options.id || options.pin_id || options.pinId, meOf(ctx));
+      return { ...result, endpoint_name: 'v3_delete_pin' };
     },
   },
 
@@ -757,6 +889,8 @@ const handlers = {
             id: String(row.id),
             username: row.username,
             full_name: row.full_name || row.username,
+            about: row.about || '',
+            flags: parseFlags(row.flags),
             image_medium_url: userShape(row).image_medium_url,
             is_admin: Boolean(row.is_admin),
             is_banned: Boolean(row.is_banned),
@@ -984,12 +1118,39 @@ const handlers = {
           if (!target) throw new ModerationError('Account not found.', 404);
           assertModeratable(me, target);
           const fullName = String(options.full_name || '').trim().slice(0, 200);
-          const username = String(options.username || '').trim().slice(0, 30);
-          const about = String(options.about || '').trim().slice(0, 1000);
-          const now = new Date().toISOString();
-          db.prepare(`UPDATE users SET full_name = ?, username = ?, about = ? WHERE id = ?`)
-            .run(fullName || target.full_name, username || target.username, about || target.about, target.id);
-          logModeration(me, 'edit_user', { targetUser: target, detail: 'Edited user profile' });
+          const username = String(options.username || '').trim().slice(0, 30)
+            .toLowerCase();
+          const about = options.about === undefined || options.about === null
+            ? (target.about || '')
+            : String(options.about).trim().slice(0, 1000);
+          const flagsJson = cleanFlags(options.flags);
+          // Same handle rules as the account holder's own form, so an admin
+          // cannot leave a profile no URL can reach.
+          if (username && !/^[A-Za-z0-9_.]{3,30}$/.test(username)) {
+            throw new ModerationError(
+              'Username must be 3-30 characters using letters, numbers, dots, or underscores.');
+          }
+          if (username) {
+            const taken = db.prepare(
+              'SELECT id FROM users WHERE lower(username) = lower(?) AND id <> ?')
+              .get(username, target.id);
+            if (taken) throw new ModerationError('That username is already taken.', 409);
+          }
+          // Deliberately does not touch username_changed_at: staff edits are
+          // not the account holder changing their handle, so the 7-day window
+          // neither applies nor starts.
+          db.prepare(`UPDATE users SET full_name = ?, username = ?, about = ?,
+                      flags = COALESCE(?, flags) WHERE id = ?`)
+            .run(
+              fullName || target.full_name, username || target.username,
+              about, flagsJson, target.id,
+            );
+          logModeration(me, 'edit_user', {
+            targetUser: target,
+            detail: username && username !== String(target.username).toLowerCase()
+              ? `Edited user profile (@${target.username} → @${username})`
+              : 'Edited user profile',
+          });
           return {
             data: { ok: true, action, user_id: target.id },
             endpoint_name: 'v3_admin_action',
@@ -1076,19 +1237,15 @@ const handlers = {
 
         const fullName = String(
           options.full_name ?? me.full_name ?? '').trim().slice(0, 200);
-        const username = String(options.username ?? me.username ?? '').trim();
+        // Stored lowercase like sign-up does, so profile URLs stay canonical
+        // and a case-only "change" is not a change at all.
+        const username = String(options.username ?? me.username ?? '').trim().toLowerCase();
         const about = String(
           options.about ?? me.about ?? '').trim().slice(0, 1000);
 
         // Pride flags: an explicit array (possibly empty) replaces the set;
         // omitting the field keeps the current one.  At most 4 are stored.
-        let flagsJson = null;
-        if (Array.isArray(options.flags)) {
-          const cleaned = [...new Set(options.flags
-            .map((flag) => String(flag).trim().toLowerCase())
-            .filter((flag) => /^[a-z0-9_]{1,24}$/.test(flag)))].slice(0, 4);
-          flagsJson = JSON.stringify(cleaned);
-        }
+        const flagsJson = cleanFlags(options.flags);
 
         if (!fullName) {
           return {
@@ -1111,6 +1268,23 @@ const handlers = {
             simple: true, httpStatus: 409,
           };
         }
+
+        // A username may be changed at most once every 7 days.  Saving the
+        // rest of the profile with the same username stays allowed.
+        const usernameChanged =
+          username.toLowerCase() !== String(me.username || '').toLowerCase();
+        const usernameAvailableAt = usernameChangeAvailableAt(me);
+        if (usernameChanged && usernameAvailableAt) {
+          return {
+            data: null,
+            error: usernameChangeError(usernameAvailableAt),
+            simple: true,
+            httpStatus: 429,
+          };
+        }
+        const usernameChangedAt = usernameChanged
+          ? new Date().toISOString()
+          : me.username_changed_at || null;
 
         let avatarUrl = null;
         if (options.image) {
@@ -1151,20 +1325,25 @@ const handlers = {
 
         if (avatarUrl) {
           db.prepare(`UPDATE users SET full_name = ?, username = ?, about = ?,
-                      flags = COALESCE(?, flags),
+                      flags = COALESCE(?, flags), username_changed_at = ?,
                       image_medium = ?, image_small = ?, image_large = ?,
                       image_xlarge = ? WHERE id = ?`)
-            .run(fullName, username, about, flagsJson, avatarUrl, avatarUrl,
-              avatarUrl, avatarUrl, me.id);
+            .run(fullName, username, about, flagsJson, usernameChangedAt,
+              avatarUrl, avatarUrl, avatarUrl, avatarUrl, me.id);
         } else {
           db.prepare(`UPDATE users SET full_name = ?, username = ?, about = ?,
-                      flags = COALESCE(?, flags) WHERE id = ?`)
-            .run(fullName, username, about, flagsJson, me.id);
+                      flags = COALESCE(?, flags), username_changed_at = ?
+                      WHERE id = ?`)
+            .run(fullName, username, about, flagsJson, usernameChangedAt, me.id);
         }
 
         const updated = getUser.get(me.id);
         return {
-          data: { ok: true, authenticated: true, user: userShape(updated) },
+          data: {
+            ok: true,
+            authenticated: true,
+            user: withUsernameWindow(updated),
+          },
           simple: true,
         };
       }
@@ -1364,6 +1543,11 @@ const handlers = {
           data: unreactPin(unreact[1], meOf(ctx)),
           endpoint_name: 'v3_unreact_pin',
         };
+      }
+      const removePinUrl = url.match(/^\/v3\/pins\/([^/]+)\/delete\/?$/);
+      if (removePinUrl) {
+        const result = deletePinFor(removePinUrl[1], meOf(ctx));
+        return { ...result, endpoint_name: 'v3_delete_pin' };
       }
       const save = url.match(/^\/v3\/board\/([^/]+)\/pin\/([^/]+)\/save\/?$/);
       if (save) {
