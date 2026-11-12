@@ -4,13 +4,17 @@ extract/seed.json.orig
 
 # --- runtime state ---
 server/pinterest.db
-server/pinterest.db-shm
-server/pinterest.db-wal
+server/pinterest.db-*
+server/pinterest.db.*
 server/public/uploads/*
 !server/public/uploads/.gitkeep
+# Unused branding leftover kept in some worktrees; the app only uses logo.jpg.
+server/public/assets/d2448b86fc4f03ccbd1163f297be7d93.gif
 
 # --- deps & tooling ---
 node_modules/
 __pycache__/
 .zcode/
 *.log
+# Dependencies live in server/; the root package.json has none.
+/package-lock.json
